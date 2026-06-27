@@ -101,7 +101,7 @@ export function findActiveCue(cues: CaptionCue[], time: number, offset = 0): num
 }
 
 export function estimateWordTimings(cue: CaptionCue, mode: HighlightMode): WordTiming[] {
-  const words = cue.text.split(/\s+/).filter(Boolean);
+  const words = extractHighlightWords(cue.text);
   if (words.length === 0) return [];
   if (mode === 'none') {
     return words.map((word, index) => ({ text: word, start: cue.start, end: cue.end, index }));
@@ -110,7 +110,7 @@ export function estimateWordTimings(cue: CaptionCue, mode: HighlightMode): WordT
   const duration = Math.max(0.1, cue.end - cue.start);
   const weights = words.map((word) => {
     if (mode === 'linear') return 1;
-    const clean = word.replace(/[’'.,;:!?…\-]/g, '');
+    const clean = word.replace(/[^\p{L}\p{N}]+/gu, '');
     const lengthWeight = Math.max(1, Math.pow(clean.length || word.length || 1, 0.72));
     const commaPause = /[,;:]$/.test(word) ? 0.35 : 0;
     const endPause = /[.!?…]$/.test(word) ? 0.5 : 0;
@@ -157,7 +157,7 @@ export function exportVtt(cues: CaptionCue[], offset = 0): string {
 export function exportJson(cues: CaptionCue[], offset = 0, highlightMode: HighlightMode = 'weighted'): string {
   const payload = {
     app: 'PAXLAB Lyrics Sync',
-    version: '0.0.1-dev0',
+    version: '0.0.3-dev0.3',
     language: AUDIO_LANGUAGE,
     offset,
     cueCount: cues.length,
@@ -176,6 +176,14 @@ export function exportJson(cues: CaptionCue[], offset = 0, highlightMode: Highli
   };
 
   return JSON.stringify(payload, null, 2);
+}
+
+
+function extractHighlightWords(text: string): string[] {
+  return text
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => /[\p{L}\p{N}]/u.test(token));
 }
 
 function round(value: number): number {

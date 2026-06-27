@@ -1,41 +1,41 @@
-# PAXLAB Subs - DEV0.1
+# PAXLAB Subs - DEV0.3
 
-Prototype separe du module sous-titres PAXLAB.
+Prototype séparé du module sous-titres PAXLAB.
 
-Objectif DEV0.1 : lecteur audio local, import SRT/VTT, affichage synchronise, surlignage du mot actif pendant la lecture, exports SRT/VTT/JSON.
+Objectif actuel : valider le workflow léger avant intégration future dans PAXLAB Browser.
 
-Langue moteur verrouillee : francais `fr-FR`.
+## Fonctionnel
+
+- Upload local MP3/WAV.
+- Langue par défaut : French `fr-FR`.
+- Collage de paroles propres uniquement.
+- Génération de captions depuis la référence Vercingétorix ou depuis le répartiteur léger provisoire.
+- Preview synchronisée.
+- Surlignage du mot actif pendant la lecture.
+- Timeline de cues générées.
+- Double-clic sur une cue pour aller directement au bon moment de la chanson.
+- Export SRT, VTT et JSON.
+- Aucun upload serveur.
+- Aucune IA chargée en DEV0.
+- Aucun FFmpeg.
 
 ## Cloudflare Pages
 
-Reglage recommande si le contenu du dossier `paxlab-subs` est copie a la racine du repo GitHub :
+Copier le contenu du dossier `paxlab-subs` à la racine du repo GitHub.
 
-- Build command : `npm run build`
-- Output directory : `dist`
-- Root directory : laisser vide
+Réglages Cloudflare :
 
-Si le dossier `paxlab-subs` est pousse tel quel dans le repo, sans copier son contenu a la racine :
+```text
+Build command: npm run build
+Output directory: dist
+Root directory: laisser vide
+```
 
-- Root directory : `paxlab-subs`
-- Build command : `npm run build`
-- Output directory : `dist`
-
-## Installation locale
+## Dev local
 
 ```bash
 npm install
 npm run build
-npm run preview
 ```
 
-Puis ouvrir `http://localhost:5173`.
-
-## Notes
-
-- Aucun upload.
-- Aucun serveur audio.
-- Aucun FFmpeg.
-- Aucune IA en DEV0.1.
-- Les paroles collees ne sont pas nettoyees ni modifiees.
-- Le SRT/VTT de reference reste ligne par ligne.
-- Le surlignage mot actif est calcule a la lecture par le lecteur.
+Puis ouvrir `dist/index.html` via un serveur statique local.

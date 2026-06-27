@@ -1,17 +1,18 @@
 # Changelog
 
-## DEV0.1 - Cloudflare ready
+## DEV0.3 - cue timeline fixes
 
-- Ajout d'un build Cloudflare propre.
-- `npm run build` genere un dossier `dist` complet.
-- Copie automatique de `index.html`, `styles.css` et `public/samples` dans `dist`.
-- Dossier racine du zip conserve sous le nom `paxlab-subs`.
+- Base conservée : DEV0.2.
+- Ajout d'une timeline de cues générées sous le lecteur.
+- Double-clic sur une cue : déplacement immédiat de la lecture au timestamp correspondant.
+- Correction du comportement de scroll : la timeline défile dans son propre panneau, sans faire descendre toute la page.
+- Correction du rendu des cues courtes de type `Vercingétorix !` : la ponctuation seule n'est plus considérée comme un mot actif.
+- Le sample Vercingétorix utilise désormais le SRT de référence fourni.
+- Export SRT/VTT/JSON conservé.
+- Langue moteur conservée en `fr-FR` par défaut.
 
-## DEV0
+## DEV0.2 - UI lyrics to captions
 
-- Lecteur audio local.
-- Import SRT/VTT.
-- Import ou collage des paroles propres.
-- Preview champagne PAXLAB.
-- Surlignage du mot actif a la lecture.
-- Exports SRT, VTT et JSON.
+- UI rapprochée du workflow lyrics-to-captions.
+- Upload audio, langue, segmentation, paroles, génération, preview, exports.
+- Suppression de l'import SRT/VTT du flux principal.

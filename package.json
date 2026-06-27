@@ -1,9 +1,9 @@
 {
   "name": "paxlab-subs",
   "private": true,
-  "version": "0.0.1-dev0.1",
+  "version": "0.0.3-dev0.3",
   "type": "module",
-  "description": "Prototype leger PAXLAB Subs - lecteur audio + sous-titres + surlignage mot actif.",
+  "description": "Prototype leger PAXLAB Subs - UI lyrics to captions + preview synchronise + timeline cue seek.",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build.mjs",
     "preview": "npx http-server dist -p 5173 -c-1"
