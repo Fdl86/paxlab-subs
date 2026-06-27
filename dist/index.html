@@ -14,9 +14,9 @@
           <div>
             <div class="title-row">
               <h1>PAXLAB Subs</h1>
-              <span class="badge">DEV2.2 LIVE</span>
+              <span class="badge">DEV2.3 STABLE</span>
             </div>
-            <p>Upload a song file, paste clean lyrics, generate synced captions with live cues, preview, then download SRT or VTT.</p>
+            <p>Upload a song file, paste clean lyrics, generate synced captions with stable WASM by default, live cues, preview, then download SRT or VTT.</p>
           </div>
           <button class="feedback" type="button" id="resetBtn">Reset</button>
         </header>
@@ -61,9 +61,9 @@
           <label class="field-block">
             <span class="field-label">Runtime</span>
             <select id="runtimeSelect">
-              <option value="auto" selected>Auto - WebGPU if available</option>
-              <option value="webgpu">Force WebGPU</option>
-              <option value="wasm">Force WASM CPU</option>
+              <option value="wasm" selected>Stable - WASM CPU</option>
+              <option value="auto">Auto - stable fallback</option>
+              <option value="webgpu">Experimental - try WebGPU</option>
             </select>
           </label>
         </section>
@@ -92,7 +92,7 @@
             <span id="elapsedText">Elapsed: 0s</span>
             <span id="engineText">Engine: not loaded</span>
           </div>
-          <div class="progress-hint" id="progressHint">Les cues apparaissent progressivement pendant la transcription par segments.</div>
+          <div class="progress-hint" id="progressHint">Les cues apparaissent progressivement. Runtime stable par défaut: WASM CPU.</div>
         </section>
 
         <section class="preview-card" id="previewCard" hidden>

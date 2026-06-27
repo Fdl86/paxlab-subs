@@ -1,21 +1,21 @@
-# PAXLAB Subs - DEV2.2 Live Cues
+# PAXLAB Subs DEV2.3 - Stable Runtime
 
-Module séparé PAXLAB pour créer des sous-titres depuis un audio et des paroles propres.
+Module séparé PAXLAB pour générer des sous-titres depuis audio + paroles propres.
 
-## Objectif DEV2.2
+## DEV2.3
 
-- Détection automatique audio + paroles propres.
-- Langue française verrouillée par défaut pour PAX VI.
-- Transcription progressive par segments audio.
-- Affichage des cues au fur et à mesure de l'avancée.
-- Preview synchronisée avec surlignage champagne du mot actif.
-- Export SRT, VTT et JSON.
+- Runtime par défaut: WASM CPU stable.
+- WebGPU conservé uniquement en option expérimentale.
+- Préflight WebGPU avant chargement du modèle, avec bascule vers WASM si non utilisable.
+- Chunks réduits à 12 secondes pour afficher les premières cues plus rapidement.
+- Langue française conservée par défaut pour PAX VI.
+- Aucun serveur, aucun upload, aucun modèle embarqué.
 
 ## Cloudflare Pages
 
 Build command:
 
-```bash
+```text
 npm run build
 ```
 
@@ -25,8 +25,4 @@ Output directory:
 dist
 ```
 
-Root directory: laisser vide si le contenu du dossier `paxlab-subs` est copié à la racine du repo.
-
-## Notes
-
-Le premier passage peut être long, car le modèle Whisper est téléchargé puis mis en cache par le navigateur. Les cues apparaissent maintenant chunk par chunk, dès qu'un segment audio est terminé.
+Copier le contenu du dossier `paxlab-subs` à la racine du repo GitHub.

@@ -3,8 +3,8 @@ const PAXLAB_LANGUAGE = 'french';
 const MIN_CUE_DURATION = 0.85;
 const MAX_LOOKAHEAD_WORDS = 34;
 const ASR_SAMPLE_RATE = 16000;
-const ASR_CHUNK_SECONDS = 28;
-const ASR_CHUNK_OVERLAP_SECONDS = 2;
+const ASR_CHUNK_SECONDS = 12;
+const ASR_CHUNK_OVERLAP_SECONDS = 1.2;
 
 const state = {
   audioFile: null,
@@ -596,19 +596,44 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[ch]));
 }
 
+
+async function webgpuPreflight() {
+  if (!navigator.gpu) return false;
+  setPhase('test webgpu', 2, 'Vérification rapide WebGPU avant chargement du modèle.');
+  try {
+    const adapter = await Promise.race([
+      navigator.gpu.requestAdapter(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 4500)),
+    ]);
+    if (!adapter) return false;
+    const device = await Promise.race([
+      adapter.requestDevice(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 4500)),
+    ]);
+    if (!device) return false;
+    try { device.destroy?.(); } catch (_) {}
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function getTranscriber() {
   const model = els.modelSelect.value;
   let runtime = els.runtimeSelect.value;
-  if (runtime === 'auto') runtime = navigator.gpu ? 'webgpu' : 'wasm';
-  if (runtime === 'webgpu' && !navigator.gpu) {
-    setStatus('WebGPU indisponible sur ce navigateur. Bascule WASM CPU.', 5);
-    runtime = 'wasm';
+  if (runtime === 'auto') runtime = 'wasm';
+  if (runtime === 'webgpu') {
+    const ok = await webgpuPreflight();
+    if (!ok) {
+      setStatus('WebGPU détecté mais non utilisable ici. Bascule WASM CPU stable.', 5, 'PAXLAB Subs privilégie le runtime fiable. WebGPU reste expérimental selon navigateur/GPU/driver.');
+      runtime = 'wasm';
+    }
   }
 
   const key = `${model}::${runtime}`;
   if (state.transcriberCache.has(key)) return state.transcriberCache.get(key);
 
-  setStatus(`Chargement moteur ASR ${model} (${runtime})...`, 3, 'Téléchargement et initialisation du modèle. Le premier passage peut être long.');
+  setStatus(`Chargement moteur ASR ${model} (${runtime})...`, 3, runtime === 'wasm' ? 'Runtime stable WASM CPU. Plus lent mais fiable.' : 'Runtime WebGPU expérimental. Bascule possible vers WASM si non utilisable.');
   setPhase('chargement moteur', 3, 'Modèle chargé depuis le cache navigateur si déjà disponible, sinon téléchargement.');
   if (els.engineText) els.engineText.textContent = `Engine: ${runtime} / ${model}`;
   const { pipeline, env } = await import(TRANSFORMERS_CDN);
@@ -628,8 +653,8 @@ async function getTranscriber() {
 
   const transcriber = await pipeline('automatic-speech-recognition', model, options);
   state.transcriberCache.set(key, transcriber);
-  setStatus('Moteur ASR chargé. Analyse audio...', 48, 'Le modèle est prêt. Lancement de la transcription française.');
-  setPhase('moteur prêt', 48, 'Le modèle est chargé.');
+  setStatus('Moteur ASR chargé. Analyse audio...', 48, 'Le modèle est prêt. Lancement de la transcription française par chunks courts.');
+  setPhase('moteur prêt', 48, `Le modèle est chargé en ${runtime}.`);
   return transcriber;
 }
 
@@ -654,7 +679,7 @@ async function generateAutoCaptions() {
     const language = els.languageSelect.value === 'auto' ? undefined : els.languageSelect.value || PAXLAB_LANGUAGE;
     const started = performance.now();
 
-    setStatus('Préparation audio pour transcription progressive...', 49, 'Décodage local, conversion mono 16 kHz, puis analyse par segments.');
+    setStatus('Préparation audio pour transcription progressive...', 49, 'Décodage local, conversion mono 16 kHz, puis analyse par segments courts de 12s.');
     setPhase('préparation audio', 49, 'Préparation du buffer audio local.');
     startProgressHeartbeat('préparation audio', 49, 54, 'Décodage local en cours.');
     const audioData = await decodeAudioToMono16k(state.audioFile);
@@ -663,8 +688,7 @@ async function generateAutoCaptions() {
 
     state.asrWords = [];
     state.transcript = '';
-  state.asrWords = [];
-  state.progressiveCues = [];
+    state.progressiveCues = [];
     state.cues = [];
     refreshOutputs(true);
 
