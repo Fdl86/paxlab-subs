@@ -1,15 +1,17 @@
-# PAXLAB Subs DEV2.3 - Stable Runtime
+# PAXLAB Subs DEV2.4 - Responsive UI
 
 Module séparé PAXLAB pour générer des sous-titres depuis audio + paroles propres.
 
-## DEV2.3
+## Objectif DEV2.4
 
-- Runtime par défaut: WASM CPU stable.
-- WebGPU conservé uniquement en option expérimentale.
-- Préflight WebGPU avant chargement du modèle, avec bascule vers WASM si non utilisable.
-- Chunks réduits à 12 secondes pour afficher les premières cues plus rapidement.
-- Langue française conservée par défaut pour PAX VI.
-- Aucun serveur, aucun upload, aucun modèle embarqué.
+- Reprise de la DA PAXLAB : sombre, champagne, compacte, premium.
+- Interface responsive, optimisée pour 1920x1080 sans scroll global.
+- Intégration future facilitée : classes CSS préfixées `ps-`, IDs préfixés `ps`, aucun framework UI, aucune dépendance runtime embarquée.
+- Runtime stable par défaut : WASM CPU.
+- WebGPU conservé en option expérimentale avec préflight.
+- Cues live visibles au fur et à mesure des chunks.
+- Export SRT, VTT et JSON.
+- Traitement local, aucun upload.
 
 ## Cloudflare Pages
 

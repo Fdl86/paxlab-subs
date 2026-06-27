@@ -1,6 +1,6 @@
 {
   "name": "paxlab-subs",
-  "version": "0.2.1-dev2-auto-progress",
+  "version": "0.2.4-dev2-ui",
   "private": true,
   "type": "module",
   "scripts": {

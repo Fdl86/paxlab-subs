@@ -1,9 +1,12 @@
 # Changelog
 
-## DEV2.3 - Stable Runtime
+## DEV2.4
 
-- Runtime par défaut basculé sur WASM CPU, car WebGPU peut rester bloqué selon navigateur/GPU/driver.
-- Option WebGPU conservée comme test expérimental uniquement.
-- Ajout d'un préflight WebGPU avant le chargement Whisper.
-- Chunks ASR réduits de 28s à 12s pour obtenir des cues visibles plus vite.
-- Messages de statut clarifiés pour distinguer runtime stable et runtime expérimental.
+- Refonte UI/UX responsive basée sur la DA PAXLAB.
+- Layout desktop 1920x1080 en écran unique : header, trois colonnes, player bas.
+- CSS préfixé `ps-` pour intégration future dans PAXLAB.
+- IDs DOM préfixés `ps` pour éviter les collisions.
+- Ajout d’un panneau moteur live plus visible : phase, elapsed, engine, chunk, cues, mots ASR.
+- Ajout d’un bouton Test runtime.
+- Ajout d’un bouton Stop avec interruption après chunk courant.
+- Conservation du pipeline auto DEV2.3 : WASM stable par défaut, WebGPU expérimental, chunks courts, exports SRT/VTT/JSON.

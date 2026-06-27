@@ -22,47 +22,60 @@ const state = {
   progressMax: 0,
   asrWords: [],
   progressiveCues: [],
+  cancelRequested: false,
 };
 
 const $ = (id) => document.getElementById(id);
 
 const els = {
-  audioInput: $('audioInput'),
-  dropZone: $('dropZone'),
-  audioDropTitle: $('audioDropTitle'),
-  audioMeta: $('audioMeta'),
-  languageSelect: $('languageSelect'),
-  segmentationSelect: $('segmentationSelect'),
-  modelSelect: $('modelSelect'),
-  runtimeSelect: $('runtimeSelect'),
-  lyricsInput: $('lyricsInput'),
-  generateBtn: $('generateBtn'),
-  playBtn: $('playBtn'),
-  resetBtn: $('resetBtn'),
-  statusText: $('statusText'),
-  progressFill: $('progressFill'),
-  phaseText: $('phaseText'),
-  elapsedText: $('elapsedText'),
-  engineText: $('engineText'),
-  progressHint: $('progressHint'),
-  previewCard: $('previewCard'),
-  previewLanguage: $('previewLanguage'),
-  prevLine: $('prevLine'),
-  activeLine: $('activeLine'),
-  nextLine: $('nextLine'),
-  audioEl: $('audioEl'),
-  playerToggle: $('playerToggle'),
-  seekBar: $('seekBar'),
-  timeDisplay: $('timeDisplay'),
-  resultsGrid: $('resultsGrid'),
-  cueList: $('cueList'),
-  cueCount: $('cueCount'),
-  asrCount: $('asrCount'),
-  transcriptOutput: $('transcriptOutput'),
-  downloadSrtBtn: $('downloadSrtBtn'),
-  downloadVttBtn: $('downloadVttBtn'),
-  downloadJsonBtn: $('downloadJsonBtn'),
+  audioInput: $('psAudioInput'),
+  dropZone: $('psDropZone'),
+  audioDropTitle: $('psAudioDropTitle'),
+  audioMeta: $('psAudioMeta'),
+  languageSelect: $('psLanguageSelect'),
+  segmentationSelect: $('psSegmentationSelect'),
+  modelSelect: $('psModelSelect'),
+  runtimeSelect: $('psRuntimeSelect'),
+  lyricsInput: $('psLyricsInput'),
+  generateBtn: $('psGenerateBtn'),
+  playBtn: $('psPlayBtn'),
+  resetBtn: $('psResetBtn'),
+  statusText: $('psStatusText'),
+  progressFill: $('psProgressFill'),
+  phaseText: $('psPhaseText'),
+  elapsedText: $('psElapsedText'),
+  engineText: $('psEngineText'),
+  progressHint: $('psProgressHint'),
+  previewCard: $('psPreviewCard'),
+  previewLanguage: $('psPreviewLanguage'),
+  prevLine: $('psPrevLine'),
+  activeLine: $('psActiveLine'),
+  nextLine: $('psNextLine'),
+  audioEl: $('psAudioEl'),
+  playerToggle: $('psPlayerToggle'),
+  seekBar: $('psSeekBar'),
+  timeDisplay: $('psTimeDisplay'),
+  resultsGrid: $('psResultsGrid'),
+  cueList: $('psCueList'),
+  cueCount: $('psCueCount'),
+  asrCount: $('psAsrCount'),
+  transcriptOutput: $('psTranscriptOutput'),
+  downloadSrtBtn: $('psDownloadSrtBtn'),
+  downloadVttBtn: $('psDownloadVttBtn'),
+  downloadJsonBtn: $('psDownloadJsonBtn'),
+  stopBtn: $('psStopBtn'),
+  testRuntimeBtn: $('psTestRuntimeBtn'),
+  chunkText: $('psChunkText'),
+  liveCueMetric: $('psLiveCueMetric'),
+  liveWordMetric: $('psLiveWordMetric'),
+  runtimeBadge: $('psRuntimeBadge'),
 };
+
+function setLiveMetrics() {
+  if (els.liveCueMetric) els.liveCueMetric.textContent = String(state.cues.length || state.progressiveCues.length || 0);
+  if (els.liveWordMetric) els.liveWordMetric.textContent = String(state.wordCount || state.asrWords.length || 0);
+  if (els.runtimeBadge) els.runtimeBadge.textContent = state.running ? 'RUNNING' : 'READY';
+}
 
 function setStatus(text, progress = null, hint = null) {
   els.statusText.textContent = text;
@@ -70,7 +83,9 @@ function setStatus(text, progress = null, hint = null) {
     els.progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
   }
   if (hint !== null && els.progressHint) els.progressHint.textContent = hint;
+  if (els.runtimeBadge && text) els.runtimeBadge.textContent = state.running ? 'RUNNING' : 'READY';
 }
+
 
 function setPhase(phase, progress = null, hint = null) {
   if (els.phaseText) els.phaseText.textContent = `Phase: ${phase}`;
@@ -78,7 +93,9 @@ function setPhase(phase, progress = null, hint = null) {
     els.progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
   }
   if (hint !== null && els.progressHint) els.progressHint.textContent = hint;
+  if (els.chunkText) els.chunkText.textContent = phase.startsWith('chunk') ? phase : els.chunkText.textContent || 'Chunk: idle';
 }
+
 
 function formatElapsed(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -523,6 +540,7 @@ function updateProgressiveCues(lines, asrWords, chunkIndex, chunkCount) {
   setStatus(`Transcription chunk ${chunkIndex}/${chunkCount}: ${partialCues.length} cues visibles.`, 50 + Math.round((chunkIndex / Math.max(1, chunkCount)) * 35), 'Les cues apparaissent au fur et à mesure des segments audio terminés. Résultat final consolidé à la fin.');
   setPhase('transcription progressive', 50 + Math.round((chunkIndex / Math.max(1, chunkCount)) * 35), `${partialCues.length} cues affichées - ${asrWords.length} mots détectés.`);
   refreshOutputs(true);
+  setLiveMetrics();
 }
 
 function activeCueAt(time) {
@@ -544,14 +562,14 @@ function activeWordIndex(cue, time) {
 function renderActiveLine(cue, time) {
   els.activeLine.innerHTML = '';
   if (!cue) {
-    els.activeLine.textContent = 'Generate captions to preview.';
+    els.activeLine.textContent = 'La ligne synchronisée apparaîtra ici.';
     return;
   }
   const activeIndex = activeWordIndex(cue, time);
   cue.words.forEach((word, index) => {
     const span = document.createElement('span');
     span.textContent = word.text;
-    if (index === activeIndex && normalizeWord(word.text)) span.className = 'active-word';
+    if (index === activeIndex && normalizeWord(word.text)) span.className = 'ps-active-word';
     els.activeLine.appendChild(span);
   });
 }
@@ -560,9 +578,9 @@ function renderCueList() {
   els.cueList.innerHTML = '';
   state.cues.forEach((cue, index) => {
     const row = document.createElement('div');
-    row.className = 'cue-row';
+    row.className = 'ps-cue-row';
     row.dataset.index = String(index);
-    row.innerHTML = `<span class="cue-time">${formatClock(cue.start)}</span><span>${escapeHtml(cue.text)}</span>`;
+    row.innerHTML = `<span class="ps-cue-time">${formatClock(cue.start)}</span><span>${escapeHtml(cue.text)}</span>`;
     row.addEventListener('dblclick', () => {
       els.audioEl.currentTime = cue.start + 0.02;
       els.audioEl.play().catch(() => {});
@@ -580,8 +598,8 @@ function updatePreview() {
   const index = activeCueAt(time);
   if (index !== state.activeCueIndex) {
     state.activeCueIndex = index;
-    const rows = els.cueList.querySelectorAll('.cue-row');
-    rows.forEach((row) => row.classList.toggle('is-active', Number(row.dataset.index) === index));
+    const rows = els.cueList.querySelectorAll('.ps-cue-row');
+    rows.forEach((row) => row.classList.toggle('ps-is-active', Number(row.dataset.index) === index));
   }
 
   const cue = state.cues[index];
@@ -671,8 +689,11 @@ async function generateAutoCaptions() {
   }
 
   state.running = true;
+  state.cancelRequested = false;
+  setLiveMetrics();
   els.generateBtn.disabled = true;
-  els.generateBtn.textContent = 'Generating...';
+  if (els.stopBtn) els.stopBtn.disabled = false;
+  els.generateBtn.textContent = 'Génération...';
 
   try {
     const transcriber = await getTranscriber();
@@ -693,7 +714,9 @@ async function generateAutoCaptions() {
     refreshOutputs(true);
 
     for (let i = 0; i < chunks.length; i += 1) {
+      if (state.cancelRequested) throw new Error('Génération interrompue par l’utilisateur.');
       const chunk = chunks[i];
+      if (els.chunkText) els.chunkText.textContent = `Chunk: ${i + 1}/${chunks.length}`;
       const pctStart = 54 + Math.round((i / Math.max(1, chunks.length)) * 34);
       setStatus(`Transcription française ${i + 1}/${chunks.length} - ${formatClock(chunk.start)} à ${formatClock(chunk.end)}...`, pctStart, 'Chaque segment terminé ajoute des cues dans la timeline.');
       startProgressHeartbeat(`chunk ${i + 1}/${chunks.length}`, pctStart, Math.min(88, pctStart + 8), `Analyse ${formatClock(chunk.start)} -> ${formatClock(chunk.end)}.`);
@@ -706,6 +729,7 @@ async function generateAutoCaptions() {
       });
       stopProgressHeartbeat();
 
+      if (state.cancelRequested) throw new Error('Génération interrompue par l’utilisateur.');
       const newWords = extractAsrWords(output, chunk.start);
       state.asrWords = dedupeAsrWords(state.asrWords.concat(newWords));
       state.transcript += `${state.transcript ? '\n' : ''}[${formatClock(chunk.start)} - ${formatClock(chunk.end)}] ${String(output?.text || '').trim()}`;
@@ -739,7 +763,9 @@ async function generateAutoCaptions() {
     stopProgressHeartbeat();
     state.running = false;
     els.generateBtn.disabled = false;
-    els.generateBtn.textContent = 'Generate Lyrics';
+    if (els.stopBtn) els.stopBtn.disabled = true;
+    els.generateBtn.textContent = 'Générer les sous-titres';
+    setLiveMetrics();
   }
 }
 
@@ -753,9 +779,11 @@ function refreshOutputs(isPartial = false) {
   els.downloadJsonBtn.disabled = state.cues.length === 0;
   els.transcriptOutput.value = state.transcript;
   els.asrCount.textContent = `${state.wordCount} words${isPartial ? ' live' : ''}`;
-  els.previewLanguage.textContent = `Language: ${els.languageSelect.value === 'auto' ? 'Auto' : 'French'}`;
+  els.previewLanguage.textContent = `Langue: ${els.languageSelect.value === 'auto' ? 'Auto' : 'Français'}`;
   renderCueList();
+  setLiveMetrics();
 }
+
 
 function cuesToSrt(cues) {
   return cues.map((cue, index) => `${index + 1}\n${formatSrtTime(cue.start)} --> ${formatSrtTime(cue.end)}\n${cue.text}`).join('\n\n') + '\n';
@@ -768,7 +796,7 @@ function cuesToVtt(cues) {
 function cuesToJson(cues) {
   return JSON.stringify({
     app: 'PAXLAB Subs',
-    version: 'dev2-2-auto-live-cues',
+    version: 'dev2-4-responsive-ui',
     language: els.languageSelect.value === 'auto' ? 'auto' : 'fr-FR',
     model: els.modelSelect.value,
     sourceAudio: state.audioFile?.name || null,
@@ -817,14 +845,17 @@ function resetApp() {
   state.transcript = '';
   state.asrWords = [];
   state.progressiveCues = [];
+  state.cancelRequested = false;
+  if (els.chunkText) els.chunkText.textContent = 'Chunk: idle';
+  setLiveMetrics();
   els.audioInput.value = '';
   els.audioEl.removeAttribute('src');
   els.audioEl.load();
   els.lyricsInput.value = '';
-  els.audioDropTitle.textContent = 'Drag and drop your MP3/WAV here, or click to choose';
-  els.audioMeta.textContent = 'Max practical test size: 50MB';
-  els.previewCard.hidden = true;
-  els.resultsGrid.hidden = true;
+  els.audioDropTitle.textContent = 'Glisse un MP3/WAV ici ou clique pour choisir';
+  els.audioMeta.textContent = 'Traitement local - aucun upload';
+  els.previewCard.hidden = false;
+  els.resultsGrid.hidden = false;
   els.cueList.innerHTML = '';
   els.transcriptOutput.value = '';
   els.seekBar.value = '0';
@@ -860,8 +891,8 @@ function bindEvents() {
     els.timeDisplay.textContent = `0:00 / ${formatClock(state.duration)}`;
     setStatus(`Audio prêt: ${formatClock(state.duration)}.`, 0, 'Durée audio détectée.');
   });
-  els.audioEl.addEventListener('play', () => { els.playerToggle.textContent = '⏸'; els.playBtn.textContent = 'Pause Preview'; });
-  els.audioEl.addEventListener('pause', () => { els.playerToggle.textContent = '▶'; els.playBtn.textContent = 'Play Preview'; });
+  els.audioEl.addEventListener('play', () => { els.playerToggle.textContent = '⏸'; els.playBtn.textContent = 'Pause preview'; });
+  els.audioEl.addEventListener('pause', () => { els.playerToggle.textContent = '▶'; els.playBtn.textContent = 'Play preview'; });
 
   els.generateBtn.addEventListener('click', generateAutoCaptions);
   els.playBtn.addEventListener('click', () => els.audioEl.paused ? els.audioEl.play().catch(() => {}) : els.audioEl.pause());
@@ -870,6 +901,18 @@ function bindEvents() {
     if (state.duration > 0) els.audioEl.currentTime = (Number(els.seekBar.value) / 1000) * state.duration;
   });
   els.resetBtn.addEventListener('click', resetApp);
+  if (els.stopBtn) els.stopBtn.addEventListener('click', () => {
+    state.cancelRequested = true;
+    setStatus('Arrêt demandé. Le chunk en cours doit finir avant interruption.', null, 'Le moteur ASR ne peut pas toujours être stoppé instantanément pendant un chunk.');
+  });
+  if (els.testRuntimeBtn) els.testRuntimeBtn.addEventListener('click', async () => {
+    if (els.runtimeSelect.value === 'webgpu') {
+      const ok = await webgpuPreflight();
+      setStatus(ok ? 'WebGPU préflight OK.' : 'WebGPU indisponible ou bloqué. WASM recommandé.', ok ? 8 : 0, ok ? 'WebGPU peut être tenté, mais WASM reste le profil stable.' : 'Utilise Stable - WASM CPU pour ce navigateur.');
+    } else {
+      setStatus('Runtime WASM CPU stable sélectionné.', 0, 'Profil recommandé pour éviter les blocages WebGPU.');
+    }
+  });
   els.downloadSrtBtn.addEventListener('click', () => downloadText(`${baseName()}.srt`, cuesToSrt(state.cues), 'text/plain;charset=utf-8'));
   els.downloadVttBtn.addEventListener('click', () => downloadText(`${baseName()}.vtt`, cuesToVtt(state.cues), 'text/vtt;charset=utf-8'));
   els.downloadJsonBtn.addEventListener('click', () => downloadText(`${baseName()}.json`, cuesToJson(state.cues), 'application/json;charset=utf-8'));
