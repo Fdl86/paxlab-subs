@@ -1,12 +1,12 @@
 {
-  "name": "paxlab-lyrics-sync-dev0",
+  "name": "paxlab-subs",
   "private": true,
-  "version": "0.0.1-dev0",
+  "version": "0.0.1-dev0.1",
   "type": "module",
-  "description": "Prototype leger PAXLAB Lyrics Sync - lecteur audio + sous-titres + surlignage mot actif.",
+  "description": "Prototype leger PAXLAB Subs - lecteur audio + sous-titres + surlignage mot actif.",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "serve": "python3 -m http.server 5173"
+    "build": "tsc -p tsconfig.json && node scripts/build.mjs",
+    "preview": "npx http-server dist -p 5173 -c-1"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
