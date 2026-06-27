@@ -2,6 +2,9 @@ const TRANSFORMERS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers
 const PAXLAB_LANGUAGE = 'french';
 const MIN_CUE_DURATION = 0.85;
 const MAX_LOOKAHEAD_WORDS = 34;
+const ASR_SAMPLE_RATE = 16000;
+const ASR_CHUNK_SECONDS = 28;
+const ASR_CHUNK_OVERLAP_SECONDS = 2;
 
 const state = {
   audioFile: null,
@@ -17,6 +20,8 @@ const state = {
   progressTimer: null,
   progressBase: 0,
   progressMax: 0,
+  asrWords: [],
+  progressiveCues: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -207,7 +212,7 @@ function flattenLyrics(lines) {
   return words;
 }
 
-function extractAsrWords(output) {
+function extractAsrWords(output, offsetSeconds = 0) {
   const chunks = Array.isArray(output?.chunks) ? output.chunks : [];
   const words = [];
   for (const chunk of chunks) {
@@ -218,7 +223,7 @@ function extractAsrWords(output) {
     const end = Number(ts[1]);
     const norm = normalizeWord(text);
     if (!norm || !Number.isFinite(start) || !Number.isFinite(end)) continue;
-    words.push({ text, norm, start, end: end > start ? end : start + 0.18 });
+    words.push({ text, norm, start: start + offsetSeconds, end: (end > start ? end : start + 0.18) + offsetSeconds });
   }
   return words.sort((a, b) => a.start - b.start);
 }
@@ -399,6 +404,127 @@ function enforceCueOrder(entries, duration) {
   }
 }
 
+
+function buildPartialCuesFromAlignment(lines, alignedWords, audioDuration) {
+  const byLine = lines.map((line, lineIndex) => ({ line, lineIndex, words: [] }));
+  for (const word of alignedWords) {
+    if (byLine[word.lineIndex]) byLine[word.lineIndex].words.push(word);
+  }
+
+  const entries = [];
+  for (const entry of byLine) {
+    const normWords = entry.words.filter((word) => word.norm);
+    const timed = entry.words.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
+    if (timed.length === 0) continue;
+
+    const coverage = timed.length / Math.max(1, normWords.length);
+    if (normWords.length >= 5 && coverage < 0.2) continue;
+
+    const start = Math.min(...timed.map((word) => word.start));
+    let end = Math.max(...timed.map((word) => word.end));
+    if (end - start < 0.55) {
+      const estimated = Math.max(MIN_CUE_DURATION, Math.min(3.2, entry.line.length / 15));
+      end = start + estimated;
+    }
+    entries.push({
+      ...entry,
+      start,
+      end: Number.isFinite(audioDuration) && audioDuration > 0 ? Math.min(audioDuration, end) : end,
+      confidence: timed.reduce((sum, word) => sum + (word.score || 0), 0) / Math.max(1, normWords.length),
+    });
+  }
+
+  entries.sort((a, b) => a.start - b.start);
+  enforceCueOrder(entries, audioDuration);
+
+  return entries.map((entry, index) => ({
+    id: index + 1,
+    sourceLine: entry.lineIndex + 1,
+    start: entry.start,
+    end: entry.end,
+    text: entry.line,
+    confidence: Number(entry.confidence || 0),
+    partial: true,
+    words: interpolateCueWords(entry.words, entry.start, entry.end),
+  }));
+}
+
+function dedupeAsrWords(words) {
+  const sorted = [...words].sort((a, b) => a.start - b.start);
+  const deduped = [];
+  for (const word of sorted) {
+    const last = deduped[deduped.length - 1];
+    if (last && Math.abs(last.start - word.start) < 0.18 && last.norm === word.norm) {
+      if ((word.end - word.start) > (last.end - last.start)) deduped[deduped.length - 1] = word;
+      continue;
+    }
+    deduped.push(word);
+  }
+  return deduped;
+}
+
+async function decodeAudioToMono16k(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('AudioContext indisponible dans ce navigateur.');
+  const ctx = new AudioContextClass();
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  const sourceRate = audioBuffer.sampleRate;
+  const sourceLength = audioBuffer.length;
+  const mono = new Float32Array(sourceLength);
+
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch += 1) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < sourceLength; i += 1) mono[i] += data[i] / audioBuffer.numberOfChannels;
+  }
+  if (typeof ctx.close === 'function') ctx.close().catch(() => {});
+
+  if (sourceRate === ASR_SAMPLE_RATE) return mono;
+
+  const targetLength = Math.max(1, Math.round((mono.length / sourceRate) * ASR_SAMPLE_RATE));
+  const resampled = new Float32Array(targetLength);
+  const ratio = sourceRate / ASR_SAMPLE_RATE;
+  for (let i = 0; i < targetLength; i += 1) {
+    const pos = i * ratio;
+    const left = Math.floor(pos);
+    const right = Math.min(left + 1, mono.length - 1);
+    const t = pos - left;
+    resampled[i] = mono[left] * (1 - t) + mono[right] * t;
+  }
+  return resampled;
+}
+
+function sliceAudio(audio, startSeconds, endSeconds) {
+  const start = Math.max(0, Math.floor(startSeconds * ASR_SAMPLE_RATE));
+  const end = Math.min(audio.length, Math.ceil(endSeconds * ASR_SAMPLE_RATE));
+  return audio.slice(start, end);
+}
+
+function buildChunkPlan(duration) {
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  const chunks = [];
+  let start = 0;
+  while (start < safeDuration) {
+    const end = Math.min(safeDuration, start + ASR_CHUNK_SECONDS);
+    chunks.push({ index: chunks.length + 1, start, end });
+    if (end >= safeDuration) break;
+    start = Math.max(0, end - ASR_CHUNK_OVERLAP_SECONDS);
+  }
+  return chunks.length ? chunks : [{ index: 1, start: 0, end: Math.max(ASR_CHUNK_SECONDS, safeDuration) }];
+}
+
+function updateProgressiveCues(lines, asrWords, chunkIndex, chunkCount) {
+  const lyricWords = flattenLyrics(lines);
+  const aligned = alignWords(lyricWords, asrWords);
+  const partialCues = buildPartialCuesFromAlignment(lines, aligned, state.duration);
+  state.cues = partialCues;
+  state.progressiveCues = partialCues;
+  state.wordCount = asrWords.length;
+  setStatus(`Transcription chunk ${chunkIndex}/${chunkCount}: ${partialCues.length} cues visibles.`, 50 + Math.round((chunkIndex / Math.max(1, chunkCount)) * 35), 'Les cues apparaissent au fur et à mesure des segments audio terminés. Résultat final consolidé à la fin.');
+  setPhase('transcription progressive', 50 + Math.round((chunkIndex / Math.max(1, chunkCount)) * 35), `${partialCues.length} cues affichées - ${asrWords.length} mots détectés.`);
+  refreshOutputs(true);
+}
+
 function activeCueAt(time) {
   return state.cues.findIndex((cue) => time >= cue.start && time <= cue.end);
 }
@@ -443,7 +569,7 @@ function renderCueList() {
     });
     els.cueList.appendChild(row);
   });
-  els.cueCount.textContent = `${state.cues.length} cues`;
+  els.cueCount.textContent = `${state.cues.length} cues${state.running ? ' live' : ''}`;
 }
 
 function updatePreview() {
@@ -527,29 +653,51 @@ async function generateAutoCaptions() {
     const transcriber = await getTranscriber();
     const language = els.languageSelect.value === 'auto' ? undefined : els.languageSelect.value || PAXLAB_LANGUAGE;
     const started = performance.now();
-    setStatus('Transcription française en cours...', 50, 'Le navigateur ne fournit pas toujours un pourcentage exact pendant Whisper. Le timer confirme que le traitement continue.');
-    startProgressHeartbeat('transcription française', 50, 78, 'Analyse vocale en cours. Premier passage plus long si le modèle n’est pas caché.');
 
-    const output = await transcriber(state.audioUrl, {
-      language,
-      task: 'transcribe',
-      chunk_length_s: 30,
-      stride_length_s: 5,
-      return_timestamps: 'word',
-    });
-
+    setStatus('Préparation audio pour transcription progressive...', 49, 'Décodage local, conversion mono 16 kHz, puis analyse par segments.');
+    setPhase('préparation audio', 49, 'Préparation du buffer audio local.');
+    startProgressHeartbeat('préparation audio', 49, 54, 'Décodage local en cours.');
+    const audioData = await decodeAudioToMono16k(state.audioFile);
+    const chunks = buildChunkPlan(state.duration || (audioData.length / ASR_SAMPLE_RATE));
     stopProgressHeartbeat();
-    setPhase('transcription terminée', 80, 'Mots détectés. Alignement avec les paroles propres.');
-    const asrWords = extractAsrWords(output);
-    state.transcript = output?.text || '';
+
+    state.asrWords = [];
+    state.transcript = '';
+  state.asrWords = [];
+  state.progressiveCues = [];
+    state.cues = [];
+    refreshOutputs(true);
+
+    for (let i = 0; i < chunks.length; i += 1) {
+      const chunk = chunks[i];
+      const pctStart = 54 + Math.round((i / Math.max(1, chunks.length)) * 34);
+      setStatus(`Transcription française ${i + 1}/${chunks.length} - ${formatClock(chunk.start)} à ${formatClock(chunk.end)}...`, pctStart, 'Chaque segment terminé ajoute des cues dans la timeline.');
+      startProgressHeartbeat(`chunk ${i + 1}/${chunks.length}`, pctStart, Math.min(88, pctStart + 8), `Analyse ${formatClock(chunk.start)} -> ${formatClock(chunk.end)}.`);
+
+      const audioChunk = sliceAudio(audioData, chunk.start, chunk.end);
+      const output = await transcriber(audioChunk, {
+        language,
+        task: 'transcribe',
+        return_timestamps: 'word',
+      });
+      stopProgressHeartbeat();
+
+      const newWords = extractAsrWords(output, chunk.start);
+      state.asrWords = dedupeAsrWords(state.asrWords.concat(newWords));
+      state.transcript += `${state.transcript ? '\n' : ''}[${formatClock(chunk.start)} - ${formatClock(chunk.end)}] ${String(output?.text || '').trim()}`;
+      updateProgressiveCues(lines, state.asrWords, i + 1, chunks.length);
+      await new Promise((resolve) => setTimeout(resolve, 35));
+    }
+
+    const asrWords = state.asrWords;
     state.wordCount = asrWords.length;
 
     if (!asrWords.length) {
       throw new Error('Le moteur ASR n’a pas renvoyé de timestamps mot par mot. Essaie le modèle Quality ou un navigateur Chromium/WebGPU.');
     }
 
-    setStatus(`Alignement avec les paroles propres (${asrWords.length} mots détectés)...`, 82, 'Conservation du texte exact collé, alignement uniquement sur les timestamps.');
-    setPhase('alignement paroles', 84, `${asrWords.length} mots détectés par le moteur ASR.`);
+    setStatus(`Consolidation finale avec les paroles propres (${asrWords.length} mots détectés)...`, 91, 'Conservation du texte exact collé, alignement uniquement sur les timestamps.');
+    setPhase('alignement final', 93, `${asrWords.length} mots détectés par le moteur ASR.`);
     const lyricWords = flattenLyrics(lines);
     const aligned = alignWords(lyricWords, asrWords);
     state.cues = buildCuesFromAlignment(lines, aligned, state.duration);
@@ -557,7 +705,7 @@ async function generateAutoCaptions() {
     const elapsed = ((performance.now() - started) / 1000).toFixed(1);
     setStatus(`Captions générées automatiquement en ${elapsed}s.`, 100, 'SRT, VTT et JSON prêts à exporter.');
     setPhase('terminé', 100, 'Prévisualisation et exports disponibles.');
-    refreshOutputs();
+    refreshOutputs(false);
   } catch (error) {
     console.error(error);
     stopProgressHeartbeat();
@@ -571,7 +719,7 @@ async function generateAutoCaptions() {
   }
 }
 
-function refreshOutputs() {
+function refreshOutputs(isPartial = false) {
   els.previewCard.hidden = false;
   els.resultsGrid.hidden = false;
   els.seekBar.disabled = state.duration <= 0;
@@ -580,7 +728,7 @@ function refreshOutputs() {
   els.downloadVttBtn.disabled = state.cues.length === 0;
   els.downloadJsonBtn.disabled = state.cues.length === 0;
   els.transcriptOutput.value = state.transcript;
-  els.asrCount.textContent = `${state.wordCount} words`;
+  els.asrCount.textContent = `${state.wordCount} words${isPartial ? ' live' : ''}`;
   els.previewLanguage.textContent = `Language: ${els.languageSelect.value === 'auto' ? 'Auto' : 'French'}`;
   renderCueList();
 }
@@ -596,7 +744,7 @@ function cuesToVtt(cues) {
 function cuesToJson(cues) {
   return JSON.stringify({
     app: 'PAXLAB Subs',
-    version: 'dev2-1-auto-progress',
+    version: 'dev2-2-auto-live-cues',
     language: els.languageSelect.value === 'auto' ? 'auto' : 'fr-FR',
     model: els.modelSelect.value,
     sourceAudio: state.audioFile?.name || null,
@@ -643,6 +791,8 @@ function resetApp() {
   state.activeCueIndex = -1;
   state.wordCount = 0;
   state.transcript = '';
+  state.asrWords = [];
+  state.progressiveCues = [];
   els.audioInput.value = '';
   els.audioEl.removeAttribute('src');
   els.audioEl.load();
@@ -658,8 +808,8 @@ function resetApp() {
   els.downloadSrtBtn.disabled = true;
   els.downloadVttBtn.disabled = true;
   els.downloadJsonBtn.disabled = true;
-  setStatus('Ready. Audio + lyrics required.', 0, 'Progression détaillée affichée pendant le chargement modèle, la transcription et l’alignement.');
-  setPhase('idle', 0, 'Progression détaillée affichée pendant le chargement modèle, la transcription et l’alignement.');
+  setStatus('Ready. Audio + lyrics required.', 0, 'Les cues apparaissent progressivement pendant la transcription par segments.');
+  setPhase('idle', 0, 'Les cues apparaissent progressivement pendant la transcription par segments.');
   if (els.elapsedText) els.elapsedText.textContent = 'Elapsed: 0s';
   if (els.engineText) els.engineText.textContent = 'Engine: not loaded';
 }

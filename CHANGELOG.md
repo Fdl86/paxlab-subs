@@ -1,18 +1,18 @@
-# CHANGELOG
+# Changelog
 
-## DEV2.1 AUTO PROGRESS
+## DEV2.2 - Live cues
 
-- Ajout d’une progression visible pendant le traitement automatique.
-- Ajout des indicateurs `Phase`, `Elapsed` et `Engine`.
-- Ajout d’un heartbeat pendant la transcription française.
-- Message d’avertissement si la transcription dure plus de 60s ou 180s.
-- Modèle par défaut passé sur `Whisper base FR` pour un meilleur compromis temps/qualité.
-- Conservation du workflow DEV2 : audio + paroles propres -> génération automatique SRT/VTT/JSON.
-- Build Cloudflare toujours ultra léger.
+- Ajout de la transcription progressive par segments audio.
+- Affichage des cues au fur et à mesure de l'analyse.
+- Ajout d'une préparation audio locale mono 16 kHz.
+- Ajout d'un compteur live cues / words pendant le traitement.
+- Conservation du flux Cloudflare statique, sans modèle embarqué, sans package-lock, sans node_modules.
 
-## DEV2 AUTO
+## DEV2.1 - Auto progress
 
-- Ajout d’une génération automatique basée ASR local navigateur.
-- Ajout du moteur Whisper via Transformers.js chargé uniquement à la demande.
-- Langue française verrouillée par défaut pour PAX VI.
-- Alignement automatique entre transcript ASR et paroles propres.
+- Ajout du suivi de phase, elapsed, engine et heartbeat.
+- Modèle par défaut Whisper base FR.
+
+## DEV2 - Auto
+
+- Premier moteur automatique audio + paroles propres.

@@ -1,33 +1,32 @@
-# PAXLAB Subs - DEV2.1 AUTO PROGRESS
+# PAXLAB Subs - DEV2.2 Live Cues
 
-Module autonome PAXLAB Subs. Objectif DEV2.1 : génération automatique de captions depuis audio et paroles propres, avec suivi visible pendant le chargement modèle, la transcription et l’alignement.
+Module séparé PAXLAB pour créer des sous-titres depuis un audio et des paroles propres.
 
-## Workflow
+## Objectif DEV2.2
 
-1. Charger un MP3 ou WAV.
-2. Laisser la langue sur `French - locked for PAX VI`.
-3. Coller les paroles propres.
-4. Cliquer sur `Generate Lyrics`.
-5. Suivre les indicateurs `Status`, `Phase`, `Elapsed` et `Engine`.
-6. Prévisualiser la lecture synchronisée.
-7. Exporter SRT, VTT ou JSON.
-
-## Important
-
-- Le texte exporté reste le texte des paroles collées.
-- Aucune réécriture des paroles.
-- Le moteur ASR est chargé uniquement au clic sur Generate Lyrics.
-- Pendant l’appel Whisper, le navigateur ne fournit pas toujours un pourcentage exact. DEV2.1 ajoute donc un timer, une phase active et un indicateur de progression souple pour confirmer que le traitement continue.
-- Pour un test rapide, utiliser `Fast test - Whisper tiny FR`. Pour un meilleur résultat, utiliser `Balanced` ou `Quality`.
+- Détection automatique audio + paroles propres.
+- Langue française verrouillée par défaut pour PAX VI.
+- Transcription progressive par segments audio.
+- Affichage des cues au fur et à mesure de l'avancée.
+- Preview synchronisée avec surlignage champagne du mot actif.
+- Export SRT, VTT et JSON.
 
 ## Cloudflare Pages
 
-Réglages recommandés :
+Build command:
 
-```text
-Build command: npm run build
-Output directory: dist
-Root directory: laisser vide
+```bash
+npm run build
 ```
 
-Le build reste statique et léger : pas de node_modules, pas de package-lock, pas de modèle embarqué.
+Output directory:
+
+```text
+dist
+```
+
+Root directory: laisser vide si le contenu du dossier `paxlab-subs` est copié à la racine du repo.
+
+## Notes
+
+Le premier passage peut être long, car le modèle Whisper est téléchargé puis mis en cache par le navigateur. Les cues apparaissent maintenant chunk par chunk, dès qu'un segment audio est terminé.
