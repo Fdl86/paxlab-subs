@@ -12,6 +12,7 @@ const state = {
   duration: 0,
   cues: [],
   activeCueIndex: -1,
+  selectedCueIndex: -1,
   transcriberCache: new Map(),
   wordCount: 0,
   transcript: '',
@@ -69,6 +70,8 @@ const els = {
   liveCueMetric: $('psLiveCueMetric'),
   liveWordMetric: $('psLiveWordMetric'),
   runtimeBadge: $('psRuntimeBadge'),
+  selectedCueLabel: $('psSelectedCueLabel'),
+  cueAdjustButtons: Array.from(document.querySelectorAll('[data-ps-adjust]')),
 };
 
 function setLiveMetrics() {
@@ -561,8 +564,9 @@ function activeWordIndex(cue, time) {
 
 function renderActiveLine(cue, time) {
   els.activeLine.innerHTML = '';
+  els.activeLine.classList.toggle('ps-active-line-empty', !cue);
   if (!cue) {
-    els.activeLine.textContent = 'La ligne synchronisée apparaîtra ici.';
+    els.activeLine.textContent = state.cues.length === 0 ? 'La ligne synchronisée apparaîtra ici.' : '';
     return;
   }
   const activeIndex = activeWordIndex(cue, time);
@@ -574,20 +578,97 @@ function renderActiveLine(cue, time) {
   });
 }
 
+function updateSelectedCueUi() {
+  const cue = state.cues[state.selectedCueIndex];
+  if (els.selectedCueLabel) {
+    els.selectedCueLabel.textContent = cue ? `#${state.selectedCueIndex + 1} - ${formatClock(cue.start)} -> ${formatClock(cue.end)}` : 'Aucune';
+  }
+  els.cueAdjustButtons.forEach((button) => { button.disabled = !cue; });
+  const rows = els.cueList.querySelectorAll('.ps-cue-row');
+  rows.forEach((row) => row.classList.toggle('ps-is-selected', Number(row.dataset.index) === state.selectedCueIndex));
+}
+
+function selectCue(index, shouldSeek = false, shouldPlay = false) {
+  if (index < 0 || index >= state.cues.length) return;
+  state.selectedCueIndex = index;
+  const cue = state.cues[index];
+  if (shouldSeek && cue) {
+    els.audioEl.currentTime = Math.max(0, cue.start + 0.02);
+    if (shouldPlay) els.audioEl.play().catch(() => {});
+  }
+  updateSelectedCueUi();
+}
+
+function retimeCueWords(cue, oldStart, oldEnd, newStart, newEnd) {
+  const oldDuration = Math.max(0.05, oldEnd - oldStart);
+  const newDuration = Math.max(0.05, newEnd - newStart);
+  cue.words = (cue.words || []).map((word) => {
+    const relStart = (Number(word.start) - oldStart) / oldDuration;
+    const relEnd = (Number(word.end) - oldStart) / oldDuration;
+    return {
+      ...word,
+      start: newStart + Math.max(0, Math.min(1, relStart)) * newDuration,
+      end: newStart + Math.max(0, Math.min(1, relEnd)) * newDuration,
+    };
+  });
+}
+
+function adjustSelectedCue(target, delta) {
+  const index = state.selectedCueIndex;
+  const cue = state.cues[index];
+  if (!cue) return;
+  const previous = state.cues[index - 1];
+  const next = state.cues[index + 1];
+  const minStart = previous ? previous.end + 0.02 : 0;
+  const maxEnd = next ? next.start - 0.02 : (state.duration || Number.POSITIVE_INFINITY);
+  const minDuration = 0.25;
+  const oldStart = cue.start;
+  const oldEnd = cue.end;
+  let newStart = cue.start;
+  let newEnd = cue.end;
+
+  if (target === 'start') {
+    newStart = Math.max(minStart, Math.min(cue.start + delta, cue.end - minDuration));
+  } else if (target === 'end') {
+    newEnd = Math.min(maxEnd, Math.max(cue.end + delta, cue.start + minDuration));
+  } else {
+    const span = cue.end - cue.start;
+    newStart = cue.start + delta;
+    newEnd = cue.end + delta;
+    if (newStart < minStart) {
+      newStart = minStart;
+      newEnd = minStart + span;
+    }
+    if (newEnd > maxEnd) {
+      newEnd = maxEnd;
+      newStart = maxEnd - span;
+    }
+    newStart = Math.max(0, newStart);
+    newEnd = Math.max(newStart + minDuration, newEnd);
+  }
+
+  cue.start = Number(newStart.toFixed(3));
+  cue.end = Number(newEnd.toFixed(3));
+  retimeCueWords(cue, oldStart, oldEnd, cue.start, cue.end);
+  renderCueList();
+  updateSelectedCueUi();
+  renderActiveLine(state.cues[activeCueAt(els.audioEl.currentTime || 0)], els.audioEl.currentTime || 0);
+}
+
 function renderCueList() {
   els.cueList.innerHTML = '';
   state.cues.forEach((cue, index) => {
     const row = document.createElement('div');
     row.className = 'ps-cue-row';
     row.dataset.index = String(index);
-    row.innerHTML = `<span class="ps-cue-time">${formatClock(cue.start)}</span><span>${escapeHtml(cue.text)}</span>`;
-    row.addEventListener('dblclick', () => {
-      els.audioEl.currentTime = cue.start + 0.02;
-      els.audioEl.play().catch(() => {});
-    });
+    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><em>${formatClock(cue.end)}</em></span><span>${escapeHtml(cue.text)}</span>`;
+    row.addEventListener('click', () => selectCue(index));
+    row.addEventListener('dblclick', () => selectCue(index, true, true));
     els.cueList.appendChild(row);
   });
+  if (state.selectedCueIndex >= state.cues.length) state.selectedCueIndex = state.cues.length - 1;
   els.cueCount.textContent = `${state.cues.length} cues${state.running ? ' live' : ''}`;
+  updateSelectedCueUi();
 }
 
 function updatePreview() {
@@ -605,6 +686,10 @@ function updatePreview() {
   const cue = state.cues[index];
   els.prevLine.textContent = index > 0 ? state.cues[index - 1].text : '';
   els.nextLine.textContent = index >= 0 && index < state.cues.length - 1 ? state.cues[index + 1].text : '';
+  if (index < 0 && state.cues.length > 0) {
+    els.prevLine.textContent = '';
+    els.nextLine.textContent = '';
+  }
   renderActiveLine(cue, time);
 
   requestAnimationFrame(updatePreview);
@@ -796,7 +881,7 @@ function cuesToVtt(cues) {
 function cuesToJson(cues) {
   return JSON.stringify({
     app: 'PAXLAB Subs',
-    version: 'dev2-4-responsive-ui',
+    version: 'dev2-5-timestamp-ux',
     language: els.languageSelect.value === 'auto' ? 'auto' : 'fr-FR',
     model: els.modelSelect.value,
     sourceAudio: state.audioFile?.name || null,
@@ -841,6 +926,7 @@ function resetApp() {
   state.duration = 0;
   state.cues = [];
   state.activeCueIndex = -1;
+  state.selectedCueIndex = -1;
   state.wordCount = 0;
   state.transcript = '';
   state.asrWords = [];
@@ -857,6 +943,7 @@ function resetApp() {
   els.previewCard.hidden = false;
   els.resultsGrid.hidden = false;
   els.cueList.innerHTML = '';
+  updateSelectedCueUi();
   els.transcriptOutput.value = '';
   els.seekBar.value = '0';
   els.playBtn.disabled = true;
@@ -916,6 +1003,10 @@ function bindEvents() {
   els.downloadSrtBtn.addEventListener('click', () => downloadText(`${baseName()}.srt`, cuesToSrt(state.cues), 'text/plain;charset=utf-8'));
   els.downloadVttBtn.addEventListener('click', () => downloadText(`${baseName()}.vtt`, cuesToVtt(state.cues), 'text/vtt;charset=utf-8'));
   els.downloadJsonBtn.addEventListener('click', () => downloadText(`${baseName()}.json`, cuesToJson(state.cues), 'application/json;charset=utf-8'));
+  els.cueAdjustButtons.forEach((button) => {
+    button.addEventListener('click', () => adjustSelectedCue(button.dataset.psAdjust, Number(button.dataset.psDelta)));
+    button.disabled = true;
+  });
 }
 
 bindEvents();

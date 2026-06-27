@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PAXLAB Subs - DEV2.4</title>
+    <title>PAXLAB Subs - DEV2.5</title>
     <meta name="description" content="PAXLAB Subs - génération automatique locale de sous-titres SRT/VTT depuis audio et paroles propres." />
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
@@ -16,7 +16,7 @@
             <div class="ps-kicker">PAXLAB</div>
             <h1>Subs</h1>
           </div>
-          <span class="ps-version">DEV2.4 UI</span>
+          <span class="ps-version">DEV2.5 UX</span>
         </div>
 
         <div class="ps-header-center">
@@ -172,6 +172,22 @@
               <div><strong id="psLiveWordMetric">0</strong><span>mots ASR</span></div>
               <div><strong id="psAsrCount">0 words</strong><span>alignement</span></div>
             </div>
+
+            <div class="ps-cue-editor" id="psCueEditor" aria-live="polite">
+              <div class="ps-cue-editor-head">
+                <span>Cue sélectionnée</span>
+                <strong id="psSelectedCueLabel">Aucune</strong>
+              </div>
+              <div class="ps-cue-editor-grid" aria-label="Ajustement immédiat des timestamps">
+                <button type="button" data-ps-adjust="start" data-ps-delta="-0.05">Début -0.05</button>
+                <button type="button" data-ps-adjust="start" data-ps-delta="0.05">Début +0.05</button>
+                <button type="button" data-ps-adjust="end" data-ps-delta="-0.05">Fin -0.05</button>
+                <button type="button" data-ps-adjust="end" data-ps-delta="0.05">Fin +0.05</button>
+                <button type="button" data-ps-adjust="cue" data-ps-delta="-0.05">Cue -0.05</button>
+                <button type="button" data-ps-adjust="cue" data-ps-delta="0.05">Cue +0.05</button>
+              </div>
+            </div>
+
             <div class="ps-cue-list" id="psCueList" aria-label="Cues générées"></div>
           </section>
 
