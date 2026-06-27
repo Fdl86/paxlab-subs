@@ -3,112 +3,138 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PAXLAB Subs - DEV0.3</title>
+    <title>PAXLAB Subs - Auto Lyrics To Captions</title>
+    <meta name="description" content="PAXLAB Subs - génération automatique locale de sous-titres SRT/VTT depuis audio et paroles propres." />
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
     <main class="page-shell">
-      <section class="app-card" aria-label="PAXLAB Subs">
-        <header class="app-header">
+      <section class="app-card">
+        <header class="hero">
           <div>
             <div class="title-row">
               <h1>PAXLAB Subs</h1>
-              <span class="beta-pill">BETA</span>
+              <span class="badge">DEV2 AUTO</span>
             </div>
-            <p class="subtitle">Upload a song file, generate lyrics captions, preview them in sync, then download SRT or VTT.</p>
+            <p>Upload a song file, paste clean lyrics, generate synced captions, preview, then download SRT or VTT.</p>
           </div>
-          <button class="feedback-btn" type="button" aria-label="Envoyer un retour">♡ Have feedback?</button>
+          <button class="feedback" type="button" id="resetBtn">Reset</button>
         </header>
 
         <section class="form-section">
-          <label class="field-label" for="audio-file">Upload MP3 or WAV</label>
-          <label id="dropzone" class="dropzone" for="audio-file" tabindex="0">
-            <input id="audio-file" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/*" />
-            <span class="drop-icon" aria-hidden="true">≋</span>
-            <strong id="drop-title">Drag and drop your MP3/WAV here, or click to choose</strong>
-            <small id="drop-subtitle">Max file size: 50MB</small>
+          <label class="field-label">Upload MP3 or WAV</label>
+          <label class="drop-zone" id="dropZone">
+            <input id="audioInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/*" />
+            <span class="drop-icon">◌</span>
+            <strong id="audioDropTitle">Drag and drop your MP3/WAV here, or click to choose</strong>
+            <small id="audioMeta">Max practical test size: 50MB</small>
           </label>
         </section>
 
-        <section class="form-grid">
-          <label class="control-field" for="language-select">
-            <span>Language</span>
-            <select id="language-select">
-              <option value="fr-FR" selected>French (recommended for PAX VI)</option>
-              <option value="auto">Auto detect (can be less accurate for songs)</option>
+        <section class="grid-two">
+          <label class="field-block">
+            <span class="field-label">Language</span>
+            <select id="languageSelect">
+              <option value="french" selected>French - locked for PAX VI</option>
+              <option value="auto">Auto detect - fallback only</option>
+              <option value="english">English</option>
             </select>
           </label>
-
-          <label class="control-field" for="segmentation-select">
-            <span>Segmentation</span>
-            <select id="segmentation-select">
-              <option value="phrase" selected>Per phrase (recommended)</option>
-              <option value="line">Per line</option>
+          <label class="field-block">
+            <span class="field-label">Segmentation</span>
+            <select id="segmentationSelect">
+              <option value="phrase" selected>Per phrase - recommended</option>
+              <option value="line">One lyric line = one cue</option>
             </select>
           </label>
         </section>
 
-        <section class="lyrics-section">
-          <div class="field-head">
-            <label class="field-label" for="lyrics">Paste your lyrics</label>
-            <span id="lyrics-count">0 lines</span>
-          </div>
-          <textarea id="lyrics" spellcheck="false" placeholder="Paste the song lyrics here, one line per caption.\nExample:\nDebout, debout, dans notre mémoire\nGergovie porte encore ta gloire"></textarea>
+        <section class="grid-two">
+          <label class="field-block">
+            <span class="field-label">Auto engine</span>
+            <select id="modelSelect">
+              <option value="Xenova/whisper-small" selected>Quality - Whisper small FR</option>
+              <option value="Xenova/whisper-base">Balanced - Whisper base FR</option>
+              <option value="Xenova/whisper-tiny">Fast test - Whisper tiny FR</option>
+            </select>
+          </label>
+          <label class="field-block">
+            <span class="field-label">Runtime</span>
+            <select id="runtimeSelect">
+              <option value="auto" selected>Auto - WebGPU if available</option>
+              <option value="webgpu">Force WebGPU</option>
+              <option value="wasm">Force WASM CPU</option>
+            </select>
+          </label>
         </section>
 
-        <div class="action-row">
-          <button id="generate-btn" class="generate-btn" type="button">✦ Generate Lyrics</button>
-          <button id="sample-btn" class="demo-btn" type="button">Load Vercingétorix demo</button>
-          <span id="status-msg" class="status-msg">French engine hint: fr-FR</span>
-        </div>
-
-        <section id="preview-panel" class="preview-panel is-empty">
-          <div class="preview-head">
-            <h2>Preview</h2>
-            <span>Language: <strong id="language-label">French</strong></span>
+        <section class="form-section">
+          <div class="lyrics-header">
+            <label class="field-label" for="lyricsInput">Paste your clean lyrics</label>
+            <span>Clean lyrics only - no text rewriting</span>
           </div>
+          <textarea id="lyricsInput" spellcheck="false" placeholder="Paste the final lyrics here, one line per caption."></textarea>
+        </section>
 
-          <div class="preview-stage" aria-live="polite">
-            <div class="stage-lines" aria-hidden="true"></div>
-            <div class="caption-box">
-              <div id="active-line" class="caption-line">Generate captions to preview them here.</div>
+        <section class="actions-row">
+          <button class="primary" id="generateBtn" type="button">Generate Lyrics</button>
+          <button class="secondary" id="playBtn" type="button" disabled>Play Preview</button>
+        </section>
+
+        <section class="status-panel" id="statusPanel" aria-live="polite">
+          <div class="status-line">
+            <strong>Status</strong>
+            <span id="statusText">Ready. Audio + lyrics required.</span>
+          </div>
+          <div class="progress-track"><div id="progressFill"></div></div>
+        </section>
+
+        <section class="preview-card" id="previewCard" hidden>
+          <div class="preview-top">
+            <strong>Preview</strong>
+            <span id="previewLanguage">Language: French</span>
+          </div>
+          <div class="subtitle-stage">
+            <div class="subtitle-box">
+              <div class="prev-line" id="prevLine"></div>
+              <div class="active-line" id="activeLine">Generate captions to preview.</div>
+              <div class="next-line" id="nextLine"></div>
             </div>
           </div>
-
           <div class="player-bar">
-            <button id="play-btn" class="play-btn" type="button" aria-label="Play pause">▶</button>
-            <input id="seek" class="seek" type="range" min="0" max="1000" step="1" value="0" />
-            <div class="time"><span id="current-time">0:00</span><span>/</span><span id="duration">0:00</span></div>
-            <button id="mute-btn" class="mute-btn" type="button" aria-label="Volume">♪</button>
-            <input id="volume" class="volume" type="range" min="0" max="1" value="0.9" step="0.01" aria-label="Volume" />
+            <button id="playerToggle" type="button">▶</button>
+            <input id="seekBar" type="range" min="0" max="1000" value="0" disabled />
+            <span id="timeDisplay">0:00 / 0:00</span>
           </div>
-          <audio id="audio" preload="metadata"></audio>
         </section>
 
-        <section class="cue-section" aria-label="Timeline des sous-titres">
-          <div class="cue-head">
-            <h2>Timeline</h2>
-            <span id="cue-count">0 cues generated</span>
-          </div>
-          <div id="cue-list" class="cue-list" role="listbox" aria-label="Generated cues">
-            <div class="cue-empty">Generate captions to see the timeline here.</div>
-          </div>
-          <p class="cue-help">Double-click a cue to jump to that exact moment in the song.</p>
+        <section class="results-grid" id="resultsGrid" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <strong>Cues générées</strong>
+              <span id="cueCount">0</span>
+            </div>
+            <div class="cue-list" id="cueList"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <strong>Transcript ASR</strong>
+              <span id="asrCount">0 words</span>
+            </div>
+            <textarea id="transcriptOutput" readonly></textarea>
+          </section>
         </section>
 
-        <section class="notice" aria-label="Note">
-          <span>⚠</span>
-          <p>Results may not be 100% accurate. Always review captions before publishing.</p>
-        </section>
-
-        <footer class="download-row">
-          <button id="export-srt" class="download-btn srt" type="button" disabled>↓ Download SRT</button>
-          <button id="export-vtt" class="download-btn vtt" type="button" disabled>↓ Download VTT</button>
-          <button id="export-json" class="download-btn json" type="button" disabled>↓ Download JSON</button>
+        <footer class="export-row">
+          <button id="downloadSrtBtn" class="download pink" type="button" disabled>Download SRT</button>
+          <button id="downloadVttBtn" class="download blue" type="button" disabled>Download VTT</button>
+          <button id="downloadJsonBtn" class="download grey" type="button" disabled>Download JSON</button>
         </footer>
+
+        <audio id="audioEl" preload="metadata"></audio>
       </section>
     </main>
 
-    <script type="module" src="./dist/main.js"></script>
+    <script type="module" src="./src/app.js"></script>
   </body>
 </html>

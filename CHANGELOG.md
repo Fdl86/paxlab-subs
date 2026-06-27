@@ -1,21 +1,13 @@
-# Changelog
+# CHANGELOG
 
-## DEV0.3.1 - cue timeline fixes
+## DEV2 AUTO
 
-- Base conservée : DEV0.2.
-- Ajout d'une timeline de cues générées sous le lecteur.
-- Double-clic sur une cue : déplacement immédiat de la lecture au timestamp correspondant.
-- Correction du comportement de scroll : la timeline défile dans son propre panneau, sans faire descendre toute la page.
-- Correction du rendu des cues courtes de type `Vercingétorix !` : la ponctuation seule n'est plus considérée comme un mot actif.
-- Le sample Vercingétorix utilise désormais le SRT de référence fourni.
-- Export SRT/VTT/JSON conservé.
-- Langue moteur conservée en `fr-FR` par défaut.
-
-## DEV0.2 - UI lyrics to captions
-
-- UI rapprochée du workflow lyrics-to-captions.
-- Upload audio, langue, segmentation, paroles, génération, preview, exports.
-- Suppression de l'import SRT/VTT du flux principal.
-
-
-DEV0.3.1 : package-lock supprime pour eviter une resolution npm via registre interne ; build Cloudflare propre via npm install + npm run build.
+- Ajout d'une vraie génération automatique basée ASR local navigateur.
+- Ajout du moteur Whisper via Transformers.js chargé uniquement à la demande.
+- Langue française verrouillée par défaut pour PAX VI.
+- Alignement automatique entre transcript ASR et paroles propres.
+- Export SRT, VTT et JSON depuis les cues générées.
+- Preview synchronisée avec surlignage du mot actif.
+- UI conservée dans l'esprit DEV0.2, plus proche du workflow Caption X.
+- Suppression du mode draft par répartition naïve comme flux principal.
+- Build Cloudflare ultra léger : pas de node_modules, pas de package-lock, pas de bundle lourd.

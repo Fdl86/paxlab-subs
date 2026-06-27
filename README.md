@@ -1,29 +1,43 @@
-# PAXLAB Subs - DEV0.3.1
+# PAXLAB Subs - DEV2 AUTO
 
-Prototype séparé du module sous-titres PAXLAB.
+Module autonome PAXLAB Subs. Objectif DEV2 : générer automatiquement des captions depuis un fichier audio et des paroles propres, sans serveur audio et sans upload.
 
-Objectif actuel : valider le workflow léger avant intégration future dans PAXLAB Browser.
+## Workflow
 
-## Fonctionnel
+1. Charger un MP3 ou WAV.
+2. Laisser la langue sur `French - locked for PAX VI`.
+3. Coller les paroles propres.
+4. Cliquer sur `Generate Lyrics`.
+5. Prévisualiser la lecture synchronisée.
+6. Exporter SRT, VTT ou JSON.
 
-- Upload local MP3/WAV.
-- Langue par défaut : French `fr-FR`.
-- Collage de paroles propres uniquement.
-- Génération de captions depuis la référence Vercingétorix ou depuis le répartiteur léger provisoire.
-- Preview synchronisée.
-- Surlignage du mot actif pendant la lecture.
-- Timeline de cues générées.
-- Double-clic sur une cue pour aller directement au bon moment de la chanson.
-- Export SRT, VTT et JSON.
-- Aucun upload serveur.
-- Aucune IA chargée en DEV0.
-- Aucun FFmpeg.
+## Important
+
+- Le texte exporté reste le texte des paroles collées.
+- Aucune réécriture des paroles.
+- Une normalisation interne est utilisée uniquement pour aligner les mots détectés avec les mots des paroles.
+- Le moteur ASR est chargé uniquement au clic sur Generate Lyrics.
+- Le premier passage est plus long car le modèle est téléchargé et mis en cache par le navigateur.
+
+## Moteur auto
+
+DEV2 utilise Transformers.js via CDN avec Whisper multilingual. La langue par défaut est `french`.
+
+Modèles proposés :
+
+- Quality : `Xenova/whisper-small`
+- Balanced : `Xenova/whisper-base`
+- Fast test : `Xenova/whisper-tiny`
+
+Runtime proposé :
+
+- Auto : WebGPU si disponible, sinon WASM CPU.
+- WebGPU : meilleur choix si navigateur compatible.
+- WASM : fallback CPU plus lent.
 
 ## Cloudflare Pages
 
-Copier le contenu du dossier `paxlab-subs` à la racine du repo GitHub.
-
-Réglages Cloudflare :
+Réglages recommandés :
 
 ```text
 Build command: npm run build
@@ -31,14 +45,4 @@ Output directory: dist
 Root directory: laisser vide
 ```
 
-## Dev local
-
-```bash
-npm install
-npm run build
-```
-
-Puis ouvrir `dist/index.html` via un serveur statique local.
-
-
-DEV0.3.1 : package-lock supprime pour eviter une resolution npm via registre interne ; build Cloudflare propre via npm install + npm run build.
+Le build est volontairement ultra léger : pas de dépendance npm, le script copie simplement les fichiers statiques dans `dist`.
