@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PAXLAB Subs - DEV2.5</title>
+    <title>PAXLAB Subs - DEV2.6</title>
     <meta name="description" content="PAXLAB Subs - génération automatique locale de sous-titres SRT/VTT depuis audio et paroles propres." />
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
@@ -16,7 +16,7 @@
             <div class="ps-kicker">PAXLAB</div>
             <h1>Subs</h1>
           </div>
-          <span class="ps-version">DEV2.5 UX</span>
+          <span class="ps-version">DEV2.6 MODEL</span>
         </div>
 
         <div class="ps-header-center">
@@ -57,7 +57,7 @@
                 <span class="ps-eyebrow">02</span>
                 <h2>Réglages</h2>
               </div>
-              <span class="ps-card-note">Stable</span>
+              <span class="ps-card-note">Whisper</span>
             </div>
 
             <label class="ps-field">
@@ -77,13 +77,14 @@
               </select>
             </label>
 
-            <label class="ps-field">
-              <span>Modèle</span>
+            <label class="ps-field ps-model-field">
+              <span>Modèle Whisper</span>
               <select id="psModelSelect">
-                <option value="Xenova/whisper-base" selected>Balanced - Whisper base FR</option>
-                <option value="Xenova/whisper-small">Quality - Whisper small FR</option>
-                <option value="Xenova/whisper-tiny">Fast test - Whisper tiny FR</option>
+                <option value="Xenova/whisper-tiny">Rapide - Whisper tiny FR</option>
+                <option value="Xenova/whisper-base" selected>Standard - Whisper base FR</option>
+                <option value="Xenova/whisper-small">Qualité - Whisper small FR</option>
               </select>
+              <small id="psModelHelp">Tiny = test rapide, Base = compromis, Small = meilleur essai qualité.</small>
             </label>
 
             <label class="ps-field">
@@ -91,7 +92,7 @@
               <select id="psRuntimeSelect">
                 <option value="wasm" selected>Stable - WASM CPU</option>
                 <option value="auto">Auto - fallback stable</option>
-                <option value="webgpu">Experimental - try WebGPU</option>
+                <option value="webgpu">Experimental - WebGPU labo</option>
               </select>
             </label>
           </section>
@@ -106,6 +107,16 @@
             </div>
 
             <div class="ps-engine-status" aria-live="polite">
+              <div class="ps-engine-summary">
+                <div>
+                  <span>Modèle</span>
+                  <strong id="psEngineModelText">Whisper base FR</strong>
+                </div>
+                <div>
+                  <span>Runtime</span>
+                  <strong id="psEngineRuntimeText">WASM CPU</strong>
+                </div>
+              </div>
               <div class="ps-status-line">
                 <strong>Status</strong>
                 <span id="psStatusText">Ready. Audio + lyrics required.</span>
@@ -121,7 +132,7 @@
             </div>
 
             <div class="ps-actions">
-              <button class="ps-primary" id="psGenerateBtn" type="button">Générer les sous-titres</button>
+              <button class="ps-primary" id="psGenerateBtn" type="button">Générer - Whisper base</button>
               <button class="ps-danger" id="psStopBtn" type="button" disabled>Stop</button>
             </div>
           </section>

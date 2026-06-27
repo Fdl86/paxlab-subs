@@ -1,23 +1,28 @@
-# PAXLAB Subs DEV2.5 - Timestamp UX
+# PAXLAB Subs DEV2.6 - Model Selector + Engine Panel
 
 Module séparé PAXLAB pour générer des sous-titres depuis audio + paroles propres.
 
-## Objectif DEV2.5
+## Objectif DEV2.6
 
-- Conserver la DA PAXLAB sombre/champagne et l'interface responsive DEV2.4.
-- Ajouter la sélection d'une cue par simple clic.
-- Ajouter l'ajustement immédiat des timestamps de la cue sélectionnée : début, fin ou cue complète.
-- Conserver le double-clic sur une cue pour aller directement au bon moment de lecture.
-- Ne plus afficher de texte parasite pendant les blancs/interludes lorsqu'une timeline existe déjà.
-- Stabiliser visuellement le bloc moteur/progression pour éviter les textes longs et les ruptures CSS.
-- Export SRT, VTT et JSON avec les corrections de timestamps appliquées.
-- Traitement local, aucun upload.
+- Rendre le choix du modèle Whisper évident dans l'interface.
+- Garder le runtime stable WASM CPU par défaut.
+- Corriger le panneau Moteur live pour éviter les chevauchements visuels.
+- Afficher clairement le modèle, le runtime, le chunk, la phase et la progression.
+
+## Workflow
+
+1. Importer un MP3 ou WAV local.
+2. Coller les paroles propres, sans nettoyage automatique.
+3. Choisir le modèle Whisper : Tiny, Base ou Small.
+4. Garder WASM CPU pour le mode stable.
+5. Générer les sous-titres.
+6. Prévisualiser, ajuster les cues, exporter SRT / VTT / JSON.
 
 ## Cloudflare Pages
 
 Build command:
 
-```text
+```bash
 npm run build
 ```
 
@@ -27,4 +32,4 @@ Output directory:
 dist
 ```
 
-Copier le contenu du dossier `paxlab-subs` à la racine du repo GitHub.
+Root directory : vide si le contenu du dossier `paxlab-subs` est copié à la racine du repo.

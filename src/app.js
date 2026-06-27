@@ -46,6 +46,8 @@ const els = {
   phaseText: $('psPhaseText'),
   elapsedText: $('psElapsedText'),
   engineText: $('psEngineText'),
+  engineModelText: $('psEngineModelText'),
+  engineRuntimeText: $('psEngineRuntimeText'),
   progressHint: $('psProgressHint'),
   previewCard: $('psPreviewCard'),
   previewLanguage: $('psPreviewLanguage'),
@@ -74,10 +76,36 @@ const els = {
   cueAdjustButtons: Array.from(document.querySelectorAll('[data-ps-adjust]')),
 };
 
+function selectedOptionLabel(select) {
+  return select?.selectedOptions?.[0]?.textContent?.trim() || '';
+}
+
+function whisperModelShortLabel(value = els.modelSelect?.value) {
+  if (value?.includes('whisper-small')) return 'Whisper small FR';
+  if (value?.includes('whisper-tiny')) return 'Whisper tiny FR';
+  return 'Whisper base FR';
+}
+
+function runtimeShortLabel(value = els.runtimeSelect?.value) {
+  if (value === 'webgpu') return 'WebGPU labo';
+  if (value === 'auto') return 'Auto -> WASM';
+  return 'WASM CPU';
+}
+
+function updateEngineSummary() {
+  const model = whisperModelShortLabel();
+  const runtime = runtimeShortLabel();
+  if (els.engineModelText) els.engineModelText.textContent = model;
+  if (els.engineRuntimeText) els.engineRuntimeText.textContent = runtime;
+  if (els.engineText && !state.running) els.engineText.textContent = `Engine: ${model} / ${runtime}`;
+  if (els.generateBtn && !state.running) els.generateBtn.textContent = `Générer - ${model.replace(' FR', '')}`;
+}
+
 function setLiveMetrics() {
   if (els.liveCueMetric) els.liveCueMetric.textContent = String(state.cues.length || state.progressiveCues.length || 0);
   if (els.liveWordMetric) els.liveWordMetric.textContent = String(state.wordCount || state.asrWords.length || 0);
   if (els.runtimeBadge) els.runtimeBadge.textContent = state.running ? 'RUNNING' : 'READY';
+  updateEngineSummary();
 }
 
 function setStatus(text, progress = null, hint = null) {
@@ -736,9 +764,13 @@ async function getTranscriber() {
   const key = `${model}::${runtime}`;
   if (state.transcriberCache.has(key)) return state.transcriberCache.get(key);
 
-  setStatus(`Chargement moteur ASR ${model} (${runtime})...`, 3, runtime === 'wasm' ? 'Runtime stable WASM CPU. Plus lent mais fiable.' : 'Runtime WebGPU expérimental. Bascule possible vers WASM si non utilisable.');
+  const modelLabel = whisperModelShortLabel(model);
+  const runtimeLabel = runtimeShortLabel(runtime);
+  if (els.engineModelText) els.engineModelText.textContent = modelLabel;
+  if (els.engineRuntimeText) els.engineRuntimeText.textContent = runtimeLabel;
+  setStatus(`Chargement ${modelLabel} (${runtimeLabel})...`, 3, runtime === 'wasm' ? 'Runtime stable WASM CPU. Plus lent mais fiable.' : 'Runtime WebGPU expérimental. Bascule possible vers WASM si non utilisable.');
   setPhase('chargement moteur', 3, 'Modèle chargé depuis le cache navigateur si déjà disponible, sinon téléchargement.');
-  if (els.engineText) els.engineText.textContent = `Engine: ${runtime} / ${model}`;
+  if (els.engineText) els.engineText.textContent = `Engine: ${modelLabel} / ${runtimeLabel}`;
   const { pipeline, env } = await import(TRANSFORMERS_CDN);
   env.allowLocalModels = false;
   env.useBrowserCache = true;
@@ -778,7 +810,7 @@ async function generateAutoCaptions() {
   setLiveMetrics();
   els.generateBtn.disabled = true;
   if (els.stopBtn) els.stopBtn.disabled = false;
-  els.generateBtn.textContent = 'Génération...';
+  els.generateBtn.textContent = `Génération - ${whisperModelShortLabel().replace(' FR', '')}...`;
 
   try {
     const transcriber = await getTranscriber();
@@ -849,7 +881,7 @@ async function generateAutoCaptions() {
     state.running = false;
     els.generateBtn.disabled = false;
     if (els.stopBtn) els.stopBtn.disabled = true;
-    els.generateBtn.textContent = 'Générer les sous-titres';
+    updateEngineSummary();
     setLiveMetrics();
   }
 }
@@ -881,7 +913,7 @@ function cuesToVtt(cues) {
 function cuesToJson(cues) {
   return JSON.stringify({
     app: 'PAXLAB Subs',
-    version: 'dev2-5-timestamp-ux',
+    version: 'dev2-6-model-selector',
     language: els.languageSelect.value === 'auto' ? 'auto' : 'fr-FR',
     model: els.modelSelect.value,
     sourceAudio: state.audioFile?.name || null,
@@ -953,8 +985,9 @@ function resetApp() {
   setStatus('Ready. Audio + lyrics required.', 0, 'Les cues apparaissent progressivement pendant la transcription par segments.');
   setPhase('idle', 0, 'Les cues apparaissent progressivement pendant la transcription par segments.');
   if (els.elapsedText) els.elapsedText.textContent = 'Elapsed: 0s';
-  if (els.engineText) els.engineText.textContent = 'Engine: not loaded';
+  updateEngineSummary();
 }
+
 
 function bindEvents() {
   els.audioInput.addEventListener('change', (event) => setAudioFile(event.target.files?.[0]));
@@ -982,6 +1015,14 @@ function bindEvents() {
   els.audioEl.addEventListener('pause', () => { els.playerToggle.textContent = '▶'; els.playBtn.textContent = 'Play preview'; });
 
   els.generateBtn.addEventListener('click', generateAutoCaptions);
+  els.modelSelect.addEventListener('change', () => {
+    updateEngineSummary();
+    setStatus(`Modèle sélectionné: ${selectedOptionLabel(els.modelSelect)}.`, 0, 'Relance la génération pour utiliser ce modèle Whisper.');
+  });
+  els.runtimeSelect.addEventListener('change', () => {
+    updateEngineSummary();
+    setStatus(`Runtime sélectionné: ${selectedOptionLabel(els.runtimeSelect)}.`, 0, 'WASM CPU reste le profil stable. WebGPU est conservé en labo.');
+  });
   els.playBtn.addEventListener('click', () => els.audioEl.paused ? els.audioEl.play().catch(() => {}) : els.audioEl.pause());
   els.playerToggle.addEventListener('click', () => els.audioEl.paused ? els.audioEl.play().catch(() => {}) : els.audioEl.pause());
   els.seekBar.addEventListener('input', () => {
@@ -1010,4 +1051,5 @@ function bindEvents() {
 }
 
 bindEvents();
+updateEngineSummary();
 requestAnimationFrame(updatePreview);
