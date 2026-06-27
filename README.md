@@ -1,4 +1,4 @@
-# PAXLAB Subs - DEV0.3
+# PAXLAB Subs - DEV0.3.1
 
 Prototype séparé du module sous-titres PAXLAB.
 
@@ -39,3 +39,6 @@ npm run build
 ```
 
 Puis ouvrir `dist/index.html` via un serveur statique local.
+
+
+DEV0.3.1 : package-lock supprime pour eviter une resolution npm via registre interne ; build Cloudflare propre via npm install + npm run build.

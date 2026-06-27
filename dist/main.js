@@ -1,40 +1,43 @@
-import { activeWordIndex, exportJson, exportSrt, exportVtt, findActiveCue, parseCaptions } from './core/captions.js';
-import { downloadText, fetchSample, fetchSampleBlob, readTextFile } from './core/files.js';
+import { activeWordIndex, exportJson, exportSrt, exportVtt, findActiveCue, parseCaptions, } from './core/captions.js';
+import { downloadText, fetchSample, fetchSampleBlob } from './core/files.js';
 import { AUDIO_LANGUAGE } from './core/language.js';
 import { formatClock } from './core/time.js';
 const state = {
     cues: [],
-    audioName: 'paxlab-audio',
-    captionsName: 'captions',
-    lyricsName: 'lyrics',
+    audioName: 'paxlab-subs',
     activeIndex: -1,
     offset: 0,
     highlightMode: 'weighted',
+    language: AUDIO_LANGUAGE.code,
+    segmentation: 'phrase',
+    pendingSampleCaptions: null,
+    pendingSampleCaptionFormat: null,
     rafId: null,
 };
 const els = {
     audio: byId('audio'),
     audioFile: byId('audio-file'),
-    captionFile: byId('caption-file'),
-    lyricsFile: byId('lyrics-file'),
+    dropzone: byId('dropzone'),
+    dropTitle: byId('drop-title'),
+    dropSubtitle: byId('drop-subtitle'),
+    languageSelect: byId('language-select'),
+    segmentationSelect: byId('segmentation-select'),
+    languageLabel: byId('language-label'),
     lyrics: byId('lyrics'),
     lyricsCount: byId('lyrics-count'),
-    captionCount: byId('caption-count'),
+    generateBtn: byId('generate-btn'),
+    sampleBtn: byId('sample-btn'),
+    statusMsg: byId('status-msg'),
+    previewPanel: byId('preview-panel'),
     playBtn: byId('play-btn'),
     seek: byId('seek'),
     currentTime: byId('current-time'),
     duration: byId('duration'),
     volume: byId('volume'),
-    prevLine: byId('prev-line'),
+    muteBtn: byId('mute-btn'),
     activeLine: byId('active-line'),
-    nextLine: byId('next-line'),
-    timeline: byId('timeline'),
-    activeCue: byId('active-cue'),
-    sampleBtn: byId('sample-btn'),
-    offset: byId('offset'),
-    offsetMinus: byId('offset-minus'),
-    offsetPlus: byId('offset-plus'),
-    highlightMode: byId('highlight-mode'),
+    cueList: byId('cue-list'),
+    cueCount: byId('cue-count'),
     exportSrt: byId('export-srt'),
     exportVtt: byId('export-vtt'),
     exportJson: byId('export-json'),
@@ -45,28 +48,55 @@ function init() {
     els.audio.volume = Number(els.volume.value);
     bindEvents();
     updateLyricsCount();
-    renderTimeline();
-    renderCaptions();
+    updateLanguageLabel();
+    updateExportsState();
+    renderCueList();
     tick();
 }
 function bindEvents() {
     els.audioFile.addEventListener('change', handleAudioFile);
-    els.captionFile.addEventListener('change', handleCaptionFile);
-    els.lyricsFile.addEventListener('change', handleLyricsFile);
-    els.lyrics.addEventListener('input', updateLyricsCount);
+    els.dropzone.addEventListener('dragenter', handleDragEnter);
+    els.dropzone.addEventListener('dragover', handleDragOver);
+    els.dropzone.addEventListener('dragleave', handleDragLeave);
+    els.dropzone.addEventListener('drop', handleDrop);
+    els.dropzone.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            els.audioFile.click();
+        }
+    });
+    els.languageSelect.addEventListener('change', () => {
+        state.language = els.languageSelect.value;
+        updateLanguageLabel();
+    });
+    els.segmentationSelect.addEventListener('change', () => {
+        state.segmentation = els.segmentationSelect.value;
+    });
+    els.lyrics.addEventListener('input', () => {
+        state.pendingSampleCaptions = null;
+        state.pendingSampleCaptionFormat = null;
+        updateLyricsCount();
+    });
+    els.generateBtn.addEventListener('click', generateCaptions);
+    els.sampleBtn.addEventListener('click', loadSample);
     els.playBtn.addEventListener('click', togglePlayback);
     els.volume.addEventListener('input', () => {
         els.audio.volume = Number(els.volume.value);
+        els.audio.muted = false;
+    });
+    els.muteBtn.addEventListener('click', () => {
+        els.audio.muted = !els.audio.muted;
+        els.muteBtn.textContent = els.audio.muted ? '×' : '♪';
     });
     els.seek.addEventListener('input', () => {
-        if (!Number.isFinite(els.audio.duration) || els.audio.duration <= 0)
+        if (!hasDuration())
             return;
         els.audio.currentTime = (Number(els.seek.value) / 1000) * els.audio.duration;
-        renderCaptions();
+        renderCaption();
     });
     els.audio.addEventListener('loadedmetadata', () => {
         els.duration.textContent = formatClock(els.audio.duration);
-        renderCaptions();
+        updateGenerateState();
     });
     els.audio.addEventListener('play', () => {
         els.playBtn.textContent = 'Ⅱ';
@@ -74,23 +104,11 @@ function bindEvents() {
     els.audio.addEventListener('pause', () => {
         els.playBtn.textContent = '▶';
     });
-    els.sampleBtn.addEventListener('click', loadSample);
-    els.offset.addEventListener('input', () => {
-        state.offset = sanitizeOffset(els.offset.value);
-        renderTimeline();
-        renderCaptions();
-    });
-    els.offsetMinus.addEventListener('click', () => nudgeOffset(-0.1));
-    els.offsetPlus.addEventListener('click', () => nudgeOffset(0.1));
-    els.highlightMode.addEventListener('change', () => {
-        state.highlightMode = els.highlightMode.value;
-        renderCaptions();
-    });
     els.exportSrt.addEventListener('click', () => exportCurrent('srt'));
     els.exportVtt.addEventListener('click', () => exportCurrent('vtt'));
     els.exportJson.addEventListener('click', () => exportCurrent('json'));
     window.addEventListener('keydown', (event) => {
-        if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)
+        if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)
             return;
         if (event.code === 'Space') {
             event.preventDefault();
@@ -106,61 +124,162 @@ function bindEvents() {
         }
     });
 }
-async function handleAudioFile() {
+function handleAudioFile() {
     const file = els.audioFile.files?.[0];
     if (!file)
         return;
+    loadAudioFile(file);
+}
+function handleDragEnter(event) {
+    event.preventDefault();
+    els.dropzone.classList.add('is-dragging');
+}
+function handleDragOver(event) {
+    event.preventDefault();
+    if (event.dataTransfer)
+        event.dataTransfer.dropEffect = 'copy';
+}
+function handleDragLeave(event) {
+    if (event.currentTarget === event.target)
+        els.dropzone.classList.remove('is-dragging');
+}
+function handleDrop(event) {
+    event.preventDefault();
+    els.dropzone.classList.remove('is-dragging');
+    const file = event.dataTransfer?.files?.[0];
+    if (!file)
+        return;
+    loadAudioFile(file);
+}
+function loadAudioFile(file) {
+    if (file.size > 50 * 1024 * 1024) {
+        setStatus('File too large. Max file size: 50MB.', true);
+        return;
+    }
     state.audioName = stripExtension(file.name);
-    const url = URL.createObjectURL(file);
-    els.audio.src = url;
-    els.audio.load();
-}
-async function handleCaptionFile() {
-    const file = els.captionFile.files?.[0];
-    if (!file)
-        return;
-    state.captionsName = stripExtension(file.name);
-    const raw = await readTextFile(file);
-    state.cues = parseCaptions(raw, file.name);
+    state.pendingSampleCaptions = null;
+    state.pendingSampleCaptionFormat = null;
+    state.cues = [];
     state.activeIndex = -1;
-    renderTimeline();
-    renderCaptions();
-}
-async function handleLyricsFile() {
-    const file = els.lyricsFile.files?.[0];
-    if (!file)
-        return;
-    state.lyricsName = stripExtension(file.name);
-    els.lyrics.value = await readTextFile(file);
-    updateLyricsCount();
+    els.audio.src = URL.createObjectURL(file);
+    els.audio.load();
+    els.dropTitle.textContent = file.name;
+    els.dropSubtitle.textContent = `${formatFileSize(file.size)} · local only`;
+    els.previewPanel.classList.add('is-empty');
+    updateExportsState();
+    renderCueList();
+    setStatus(`Audio loaded · ${state.language === 'fr-FR' ? 'French engine hint: fr-FR' : 'Auto detect selected'}`);
+    renderCaption();
 }
 async function loadSample() {
     try {
         els.sampleBtn.disabled = true;
-        els.sampleBtn.textContent = 'Chargement...';
+        els.sampleBtn.textContent = 'Loading...';
         const [lyrics, captions, audioBlob] = await Promise.all([
             fetchSample('./public/samples/vercingetorix.txt'),
-            fetchSample('./public/samples/vercingetorix.vtt'),
+            fetchSample('./public/samples/vercingetorix.srt'),
             fetchSampleBlob('./public/samples/vercingetorix.mp3'),
         ]);
+        state.audioName = 'figure-46-vercingetorix-v2-paxlab-preview';
+        state.pendingSampleCaptions = captions;
+        state.pendingSampleCaptionFormat = 'srt';
+        state.cues = [];
+        state.activeIndex = -1;
+        state.language = AUDIO_LANGUAGE.code;
+        els.languageSelect.value = AUDIO_LANGUAGE.code;
         els.lyrics.value = lyrics;
-        state.cues = parseCaptions(captions, 'vercingetorix.vtt');
-        state.audioName = 'vercingetorix';
-        state.captionsName = 'vercingetorix';
-        state.lyricsName = 'vercingetorix';
         els.audio.src = URL.createObjectURL(audioBlob);
         els.audio.load();
+        els.dropTitle.textContent = 'figure-46-vercingetorix-v2-paxlab-preview-1-16bit.mp3';
+        els.dropSubtitle.textContent = 'Demo loaded · local sample';
         updateLyricsCount();
-        renderTimeline();
-        renderCaptions();
+        updateLanguageLabel();
+        updateExportsState();
+        renderCueList();
+        els.previewPanel.classList.add('is-empty');
+        setStatus('Demo loaded. Click Generate Lyrics to create the preview.');
+        renderCaption();
     }
     catch (error) {
-        alert(error instanceof Error ? error.message : 'Erreur pendant le chargement de l’exemple. Lance le projet via un petit serveur local.');
+        setStatus(error instanceof Error ? error.message : 'Demo loading failed.', true);
     }
     finally {
         els.sampleBtn.disabled = false;
-        els.sampleBtn.textContent = 'Charger l’exemple Vercingétorix';
+        els.sampleBtn.textContent = 'Load Vercingétorix demo';
     }
+}
+function generateCaptions() {
+    const lyrics = els.lyrics.value;
+    const lines = extractLyricLines(lyrics, state.segmentation);
+    if (!els.audio.src) {
+        setStatus('Upload an MP3/WAV before generating captions.', true);
+        return;
+    }
+    if (lines.length === 0) {
+        setStatus('Paste lyrics before generating captions.', true);
+        return;
+    }
+    if (state.pendingSampleCaptions) {
+        state.cues = parseCaptions(state.pendingSampleCaptions, `vercingetorix.${state.pendingSampleCaptionFormat ?? 'srt'}`);
+        setStatus(`Reference captions generated · ${state.cues.length} cues · language ${state.language === 'fr-FR' ? 'fr-FR' : 'auto'}.`);
+    }
+    else {
+        state.cues = buildLightweightCaptions(lines, hasDuration() ? els.audio.duration : 0);
+        setStatus(`Prototype captions generated · ${state.cues.length} cues · language ${state.language === 'fr-FR' ? 'fr-FR' : 'auto'}.`);
+    }
+    state.activeIndex = -1;
+    els.previewPanel.classList.remove('is-empty');
+    updateExportsState();
+    renderCueList();
+    renderCaption();
+}
+function extractLyricLines(raw, mode) {
+    const result = [];
+    let emptyRun = 0;
+    for (const original of raw.replace(/\r/g, '').split('\n')) {
+        const text = original.trim();
+        if (!text) {
+            emptyRun += 1;
+            continue;
+        }
+        if (mode === 'phrase') {
+            result.push({ text, gapBefore: emptyRun });
+        }
+        else {
+            result.push({ text, gapBefore: emptyRun });
+        }
+        emptyRun = 0;
+    }
+    return result;
+}
+function buildLightweightCaptions(lines, duration) {
+    const startPad = duration > 20 ? 2 : 0.5;
+    const endPad = duration > 20 ? 4 : 0.5;
+    const available = Math.max(lines.length * 1.25, duration > 0 ? duration - startPad - endPad : lines.length * 3);
+    const weights = lines.map((line) => estimateLineWeight(line.text));
+    const gapUnits = lines.map((line) => Math.min(3, line.gapBefore) * 0.75);
+    const totalUnits = weights.reduce((sum, weight) => sum + weight, 0) + gapUnits.reduce((sum, gap) => sum + gap, 0);
+    let cursor = startPad;
+    return lines.map((line, index) => {
+        const gap = totalUnits > 0 ? available * (gapUnits[index] / totalUnits) : 0;
+        cursor += gap;
+        const slice = totalUnits > 0 ? available * (weights[index] / totalUnits) : 3;
+        const start = cursor;
+        const end = index === lines.length - 1 ? startPad + available : cursor + slice;
+        cursor = end;
+        return {
+            id: index + 1,
+            start: round(start),
+            end: round(Math.max(start + 0.9, end)),
+            text: line.text,
+        };
+    });
+}
+function estimateLineWeight(text) {
+    const words = text.split(/\s+/).filter(Boolean).length;
+    const chars = text.replace(/\s/g, '').length;
+    const punctuationPause = /[.!?…]$/.test(text) ? 0.65 : /[,;:]$/.test(text) ? 0.35 : 0;
+    return Math.max(1.25, Math.min(6.2, 0.9 + words * 0.42 + Math.pow(chars, 0.58) * 0.28 + punctuationPause));
 }
 function togglePlayback() {
     if (!els.audio.src)
@@ -172,125 +291,166 @@ function togglePlayback() {
 }
 function tick() {
     renderTransport();
-    renderCaptions();
+    renderCaption();
     state.rafId = window.requestAnimationFrame(tick);
 }
 function renderTransport() {
-    const duration = Number.isFinite(els.audio.duration) ? els.audio.duration : 0;
+    const duration = hasDuration() ? els.audio.duration : 0;
     const current = Number.isFinite(els.audio.currentTime) ? els.audio.currentTime : 0;
     els.currentTime.textContent = formatClock(current);
     els.duration.textContent = formatClock(duration);
     els.seek.value = duration > 0 ? String(Math.round((current / duration) * 1000)) : '0';
 }
-function renderCaptions() {
+function renderCaption() {
     const index = findActiveCue(state.cues, els.audio.currentTime, state.offset);
     if (index !== state.activeIndex) {
         state.activeIndex = index;
-        updateTimelineSelection();
+        updateCueListActive(index);
     }
     const cue = index >= 0 ? state.cues[index] : null;
-    const previous = index > 0 ? state.cues[index - 1] : null;
-    const next = index >= 0 && index < state.cues.length - 1 ? state.cues[index + 1] : null;
-    els.prevLine.textContent = previous?.text ?? '';
-    els.nextLine.textContent = next?.text ?? '';
-    els.activeCue.textContent = cue ? `#${cue.id}` : '--';
     if (!cue) {
-        els.activeLine.textContent = state.cues.length ? '...' : 'Charge un audio et un SRT/VTT';
+        els.activeLine.textContent = state.cues.length ? '...' : 'Generate captions to preview them here.';
         return;
     }
     renderActiveLine(cue);
 }
 function renderActiveLine(cue) {
-    const words = cue.text.split(/(\s+)/);
-    const compactWords = cue.text.split(/\s+/).filter(Boolean);
+    const tokens = cue.text.split(/(\s+)/);
     const activeWord = activeWordIndex(cue, els.audio.currentTime, state.highlightMode, state.offset);
     let wordCursor = -1;
     els.activeLine.replaceChildren();
-    for (const token of words) {
+    for (const token of tokens) {
         if (/^\s+$/.test(token)) {
             els.activeLine.append(document.createTextNode(token));
             continue;
         }
         if (!token)
             continue;
-        wordCursor += 1;
+        const highlightable = isHighlightableToken(token);
+        if (highlightable)
+            wordCursor += 1;
         const span = document.createElement('span');
         span.textContent = token;
-        span.className = wordCursor === activeWord && state.highlightMode !== 'none' ? 'word active-word' : 'word';
-        span.dataset.wordIndex = String(wordCursor);
-        span.dataset.totalWords = String(compactWords.length);
+        span.className = highlightable && wordCursor === activeWord ? 'word active-word' : highlightable ? 'word' : 'word punctuation';
         els.activeLine.append(span);
     }
 }
-function renderTimeline() {
-    els.captionCount.textContent = `${state.cues.length} cue${state.cues.length > 1 ? 's' : ''}`;
-    els.timeline.replaceChildren();
-    if (state.cues.length === 0) {
+function renderCueList() {
+    els.cueList.replaceChildren();
+    els.cueCount.textContent = `${state.cues.length} cue${state.cues.length > 1 ? 's' : ''} generated`;
+    if (!state.cues.length) {
         const empty = document.createElement('div');
-        empty.className = 'timeline-empty';
-        empty.textContent = 'Aucune cue importée.';
-        els.timeline.append(empty);
+        empty.className = 'cue-empty';
+        empty.textContent = 'Generate captions to see the timeline here.';
+        els.cueList.append(empty);
         return;
     }
-    const fragment = document.createDocumentFragment();
-    for (const cue of state.cues) {
+    for (const [index, cue] of state.cues.entries()) {
         const row = document.createElement('button');
         row.type = 'button';
-        row.className = 'timeline-row';
-        row.dataset.index = String(cue.id - 1);
-        row.innerHTML = `<span class="timeline-time">${formatClock(cue.start + state.offset)} - ${formatClock(cue.end + state.offset)}</span><span class="timeline-text"></span>`;
-        row.querySelector('.timeline-text').textContent = cue.text;
-        row.addEventListener('click', () => {
-            els.audio.currentTime = Math.max(0, cue.start + state.offset);
-            renderCaptions();
+        row.className = 'cue-row';
+        row.dataset.index = String(index);
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', String(index === state.activeIndex));
+        row.title = 'Double-click to jump to this cue';
+        const time = document.createElement('span');
+        time.className = 'cue-time';
+        time.textContent = `${formatClock(cue.start)} - ${formatClock(cue.end)}`;
+        const text = document.createElement('span');
+        text.className = 'cue-text';
+        text.textContent = cue.text.replace(/\n/g, ' / ');
+        row.append(time, text);
+        row.addEventListener('dblclick', (event) => {
+            event.preventDefault();
+            seekToCue(index);
+            row.blur();
         });
-        fragment.append(row);
+        els.cueList.append(row);
     }
-    els.timeline.append(fragment);
-    updateTimelineSelection();
+    updateCueListActive(state.activeIndex);
 }
-function updateTimelineSelection() {
-    const rows = els.timeline.querySelectorAll('.timeline-row');
+function updateCueListActive(index) {
+    const rows = els.cueList.querySelectorAll('.cue-row');
     rows.forEach((row) => {
-        row.classList.toggle('is-active', Number(row.dataset.index) === state.activeIndex);
+        const active = Number(row.dataset.index) === index;
+        row.classList.toggle('is-active', active);
+        row.setAttribute('aria-selected', String(active));
     });
-    const active = els.timeline.querySelector('.timeline-row.is-active');
-    if (active)
-        active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (index >= 0)
+        scrollCueListInsidePanel(index);
+}
+function scrollCueListInsidePanel(index) {
+    const row = els.cueList.querySelector(`.cue-row[data-index="${index}"]`);
+    if (!row)
+        return;
+    const rowTop = row.offsetTop;
+    const rowBottom = rowTop + row.offsetHeight;
+    const viewTop = els.cueList.scrollTop;
+    const viewBottom = viewTop + els.cueList.clientHeight;
+    if (rowTop >= viewTop && rowBottom <= viewBottom)
+        return;
+    const target = rowTop - els.cueList.clientHeight * 0.42 + row.offsetHeight * 0.5;
+    els.cueList.scrollTop = Math.max(0, target);
+}
+function seekToCue(index) {
+    const cue = state.cues[index];
+    if (!cue || !els.audio.src)
+        return;
+    els.audio.currentTime = Math.max(0, cue.start + state.offset + 0.015);
+    renderTransport();
+    renderCaption();
+    setStatus(`Cue ${index + 1} selected · ${formatClock(cue.start)}.`);
+}
+function isHighlightableToken(token) {
+    return /[\p{L}\p{N}]/u.test(token);
 }
 function updateLyricsCount() {
     const count = els.lyrics.value.split('\n').filter((line) => line.trim().length > 0).length;
-    els.lyricsCount.textContent = `${count} ligne${count > 1 ? 's' : ''}`;
+    els.lyricsCount.textContent = `${count} line${count > 1 ? 's' : ''}`;
+    updateGenerateState();
 }
-function nudgeOffset(delta) {
-    const next = Math.round((state.offset + delta) * 10) / 10;
-    state.offset = next;
-    els.offset.value = String(next);
-    renderTimeline();
-    renderCaptions();
+function updateLanguageLabel() {
+    els.languageLabel.textContent = state.language === 'fr-FR' ? 'French' : 'Auto detect';
+    setStatus(state.language === 'fr-FR' ? 'French engine hint: fr-FR' : 'Auto detect selected. French is recommended for PAX VI songs.');
 }
-function sanitizeOffset(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed))
-        return 0;
-    return Math.max(-60, Math.min(60, parsed));
+function updateGenerateState() {
+    const hasLyrics = els.lyrics.value.split('\n').some((line) => line.trim());
+    els.generateBtn.disabled = !hasLyrics || !els.audio.src;
+}
+function updateExportsState() {
+    const disabled = state.cues.length === 0;
+    els.exportSrt.disabled = disabled;
+    els.exportVtt.disabled = disabled;
+    els.exportJson.disabled = disabled;
 }
 function exportCurrent(kind) {
     if (!state.cues.length)
         return;
-    const baseName = `${state.audioName || state.captionsName || 'paxlab-lyrics-sync'}-paxlab`;
-    if (kind === 'srt') {
+    const baseName = `${state.audioName || 'paxlab-subs'}-paxlab`;
+    if (kind === 'srt')
         downloadText(`${baseName}.srt`, exportSrt(state.cues, state.offset), 'application/x-subrip;charset=utf-8');
-    }
-    if (kind === 'vtt') {
+    if (kind === 'vtt')
         downloadText(`${baseName}.vtt`, exportVtt(state.cues, state.offset), 'text/vtt;charset=utf-8');
-    }
-    if (kind === 'json') {
+    if (kind === 'json')
         downloadText(`${baseName}.json`, exportJson(state.cues, state.offset, state.highlightMode), 'application/json;charset=utf-8');
-    }
+}
+function setStatus(message, isError = false) {
+    els.statusMsg.textContent = message;
+    els.statusMsg.dataset.error = String(isError);
+}
+function hasDuration() {
+    return Number.isFinite(els.audio.duration) && els.audio.duration > 0;
 }
 function stripExtension(filename) {
     return filename.replace(/\.[^.]+$/, '');
+}
+function formatFileSize(size) {
+    if (size < 1024 * 1024)
+        return `${Math.round(size / 1024)}KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)}MB`;
+}
+function round(value) {
+    return Math.round(value * 1000) / 1000;
 }
 function byId(id) {
     const element = document.getElementById(id);

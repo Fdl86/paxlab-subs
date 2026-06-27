@@ -1,6 +1,6 @@
 # Changelog
 
-## DEV0.3 - cue timeline fixes
+## DEV0.3.1 - cue timeline fixes
 
 - Base conservée : DEV0.2.
 - Ajout d'une timeline de cues générées sous le lecteur.
@@ -16,3 +16,6 @@
 - UI rapprochée du workflow lyrics-to-captions.
 - Upload audio, langue, segmentation, paroles, génération, preview, exports.
 - Suppression de l'import SRT/VTT du flux principal.
+
+
+DEV0.3.1 : package-lock supprime pour eviter une resolution npm via registre interne ; build Cloudflare propre via npm install + npm run build.

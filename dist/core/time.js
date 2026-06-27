@@ -12,10 +12,11 @@ export function parseTimestamp(value) {
 }
 export function formatSrtTime(seconds) {
     const safe = Math.max(0, seconds);
-    const hours = Math.floor(safe / 3600);
-    const minutes = Math.floor((safe % 3600) / 60);
-    const secs = Math.floor(safe % 60);
-    const millis = Math.round((safe - Math.floor(safe)) * 1000);
+    const totalMillis = Math.round(safe * 1000);
+    const hours = Math.floor(totalMillis / 3600000);
+    const minutes = Math.floor((totalMillis % 3600000) / 60000);
+    const secs = Math.floor((totalMillis % 60000) / 1000);
+    const millis = totalMillis % 1000;
     return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${String(millis).padStart(3, '0')}`;
 }
 export function formatVttTime(seconds) {
