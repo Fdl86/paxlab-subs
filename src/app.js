@@ -13,6 +13,10 @@ const state = {
   wordCount: 0,
   transcript: '',
   running: false,
+  jobStartedAt: 0,
+  progressTimer: null,
+  progressBase: 0,
+  progressMax: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -32,6 +36,10 @@ const els = {
   resetBtn: $('resetBtn'),
   statusText: $('statusText'),
   progressFill: $('progressFill'),
+  phaseText: $('phaseText'),
+  elapsedText: $('elapsedText'),
+  engineText: $('engineText'),
+  progressHint: $('progressHint'),
   previewCard: $('previewCard'),
   previewLanguage: $('previewLanguage'),
   prevLine: $('prevLine'),
@@ -51,10 +59,56 @@ const els = {
   downloadJsonBtn: $('downloadJsonBtn'),
 };
 
-function setStatus(text, progress = null) {
+function setStatus(text, progress = null, hint = null) {
   els.statusText.textContent = text;
   if (typeof progress === 'number') {
     els.progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+  }
+  if (hint !== null && els.progressHint) els.progressHint.textContent = hint;
+}
+
+function setPhase(phase, progress = null, hint = null) {
+  if (els.phaseText) els.phaseText.textContent = `Phase: ${phase}`;
+  if (typeof progress === 'number') {
+    els.progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+  }
+  if (hint !== null && els.progressHint) els.progressHint.textContent = hint;
+}
+
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = String(total % 60).padStart(2, '0');
+  return m > 0 ? `${m}:${s}` : `${total}s`;
+}
+
+function startProgressHeartbeat(phase, base, max, hint) {
+  stopProgressHeartbeat();
+  state.jobStartedAt = performance.now();
+  state.progressBase = base;
+  state.progressMax = max;
+  setPhase(phase, base, hint);
+
+  state.progressTimer = window.setInterval(() => {
+    const elapsedMs = performance.now() - state.jobStartedAt;
+    if (els.elapsedText) els.elapsedText.textContent = `Elapsed: ${formatElapsed(elapsedMs)}`;
+
+    const elapsedSec = elapsedMs / 1000;
+    const softProgress = base + (max - base) * (1 - Math.exp(-elapsedSec / 85));
+    els.progressFill.style.width = `${Math.min(max, softProgress).toFixed(1)}%`;
+
+    if (elapsedSec > 180 && els.progressHint) {
+      els.progressHint.textContent = 'Toujours en cours. Sur WASM CPU, Whisper peut être très lent sur un morceau complet. Pour tester vite, utilise Fast test - Whisper tiny FR.';
+    } else if (elapsedSec > 60 && els.progressHint) {
+      els.progressHint.textContent = 'Toujours en cours. Le navigateur ne donne pas de pourcentage exact pendant la transcription, mais le job est actif.';
+    }
+  }, 1000);
+}
+
+function stopProgressHeartbeat() {
+  if (state.progressTimer) {
+    window.clearInterval(state.progressTimer);
+    state.progressTimer = null;
   }
 }
 
@@ -428,7 +482,9 @@ async function getTranscriber() {
   const key = `${model}::${runtime}`;
   if (state.transcriberCache.has(key)) return state.transcriberCache.get(key);
 
-  setStatus(`Chargement moteur ASR ${model} (${runtime})...`, 3);
+  setStatus(`Chargement moteur ASR ${model} (${runtime})...`, 3, 'Téléchargement et initialisation du modèle. Le premier passage peut être long.');
+  setPhase('chargement moteur', 3, 'Modèle chargé depuis le cache navigateur si déjà disponible, sinon téléchargement.');
+  if (els.engineText) els.engineText.textContent = `Engine: ${runtime} / ${model}`;
   const { pipeline, env } = await import(TRANSFORMERS_CDN);
   env.allowLocalModels = false;
   env.useBrowserCache = true;
@@ -437,16 +493,17 @@ async function getTranscriber() {
     device: runtime,
     progress_callback: (data) => {
       if (data?.status === 'progress' && Number.isFinite(data.progress)) {
-        setStatus(`Téléchargement modèle: ${data.file || 'model'} ${Math.round(data.progress)}%`, Math.max(5, Math.min(45, data.progress * 0.45)));
+        setStatus(`Téléchargement modèle: ${data.file || 'model'} ${Math.round(data.progress)}%`, Math.max(5, Math.min(45, data.progress * 0.45)), 'Téléchargement modèle en cours. Cette étape est mise en cache par le navigateur.');
       } else if (data?.status) {
-        setStatus(`Moteur ASR: ${data.status}`, null);
+        setStatus(`Moteur ASR: ${data.status}`, null, 'Initialisation moteur ASR.');
       }
     },
   };
 
   const transcriber = await pipeline('automatic-speech-recognition', model, options);
   state.transcriberCache.set(key, transcriber);
-  setStatus('Moteur ASR chargé. Analyse audio...', 48);
+  setStatus('Moteur ASR chargé. Analyse audio...', 48, 'Le modèle est prêt. Lancement de la transcription française.');
+  setPhase('moteur prêt', 48, 'Le modèle est chargé.');
   return transcriber;
 }
 
@@ -470,7 +527,8 @@ async function generateAutoCaptions() {
     const transcriber = await getTranscriber();
     const language = els.languageSelect.value === 'auto' ? undefined : els.languageSelect.value || PAXLAB_LANGUAGE;
     const started = performance.now();
-    setStatus('Transcription française en cours. Premier passage plus long si modèle non caché...', 50);
+    setStatus('Transcription française en cours...', 50, 'Le navigateur ne fournit pas toujours un pourcentage exact pendant Whisper. Le timer confirme que le traitement continue.');
+    startProgressHeartbeat('transcription française', 50, 78, 'Analyse vocale en cours. Premier passage plus long si le modèle n’est pas caché.');
 
     const output = await transcriber(state.audioUrl, {
       language,
@@ -480,6 +538,8 @@ async function generateAutoCaptions() {
       return_timestamps: 'word',
     });
 
+    stopProgressHeartbeat();
+    setPhase('transcription terminée', 80, 'Mots détectés. Alignement avec les paroles propres.');
     const asrWords = extractAsrWords(output);
     state.transcript = output?.text || '';
     state.wordCount = asrWords.length;
@@ -488,18 +548,23 @@ async function generateAutoCaptions() {
       throw new Error('Le moteur ASR n’a pas renvoyé de timestamps mot par mot. Essaie le modèle Quality ou un navigateur Chromium/WebGPU.');
     }
 
-    setStatus(`Alignement avec les paroles propres (${asrWords.length} mots détectés)...`, 82);
+    setStatus(`Alignement avec les paroles propres (${asrWords.length} mots détectés)...`, 82, 'Conservation du texte exact collé, alignement uniquement sur les timestamps.');
+    setPhase('alignement paroles', 84, `${asrWords.length} mots détectés par le moteur ASR.`);
     const lyricWords = flattenLyrics(lines);
     const aligned = alignWords(lyricWords, asrWords);
     state.cues = buildCuesFromAlignment(lines, aligned, state.duration);
 
     const elapsed = ((performance.now() - started) / 1000).toFixed(1);
-    setStatus(`Captions générées automatiquement en ${elapsed}s.`, 100);
+    setStatus(`Captions générées automatiquement en ${elapsed}s.`, 100, 'SRT, VTT et JSON prêts à exporter.');
+    setPhase('terminé', 100, 'Prévisualisation et exports disponibles.');
     refreshOutputs();
   } catch (error) {
     console.error(error);
+    stopProgressHeartbeat();
+    setPhase('erreur', 0, 'Le moteur auto a échoué ou a été interrompu.');
     setStatus(`Erreur auto: ${error.message || error}`, 0);
   } finally {
+    stopProgressHeartbeat();
     state.running = false;
     els.generateBtn.disabled = false;
     els.generateBtn.textContent = 'Generate Lyrics';
@@ -531,7 +596,7 @@ function cuesToVtt(cues) {
 function cuesToJson(cues) {
   return JSON.stringify({
     app: 'PAXLAB Subs',
-    version: 'dev2-auto',
+    version: 'dev2-1-auto-progress',
     language: els.languageSelect.value === 'auto' ? 'auto' : 'fr-FR',
     model: els.modelSelect.value,
     sourceAudio: state.audioFile?.name || null,
@@ -565,7 +630,8 @@ function setAudioFile(file) {
   els.audioEl.src = state.audioUrl;
   els.audioDropTitle.textContent = file.name;
   els.audioMeta.textContent = `${formatBytes(file.size)} - local only`;
-  setStatus('Audio chargé. En attente des paroles propres.', 0);
+  setStatus('Audio chargé. En attente des paroles propres.', 0, 'Colle les paroles propres, puis lance Generate Lyrics.');
+  setPhase('audio prêt', 0, 'Audio local chargé.');
 }
 
 function resetApp() {
@@ -592,7 +658,10 @@ function resetApp() {
   els.downloadSrtBtn.disabled = true;
   els.downloadVttBtn.disabled = true;
   els.downloadJsonBtn.disabled = true;
-  setStatus('Ready. Audio + lyrics required.', 0);
+  setStatus('Ready. Audio + lyrics required.', 0, 'Progression détaillée affichée pendant le chargement modèle, la transcription et l’alignement.');
+  setPhase('idle', 0, 'Progression détaillée affichée pendant le chargement modèle, la transcription et l’alignement.');
+  if (els.elapsedText) els.elapsedText.textContent = 'Elapsed: 0s';
+  if (els.engineText) els.engineText.textContent = 'Engine: not loaded';
 }
 
 function bindEvents() {
@@ -615,7 +684,7 @@ function bindEvents() {
   els.audioEl.addEventListener('loadedmetadata', () => {
     state.duration = els.audioEl.duration || 0;
     els.timeDisplay.textContent = `0:00 / ${formatClock(state.duration)}`;
-    setStatus(`Audio prêt: ${formatClock(state.duration)}.`, 0);
+    setStatus(`Audio prêt: ${formatClock(state.duration)}.`, 0, 'Durée audio détectée.');
   });
   els.audioEl.addEventListener('play', () => { els.playerToggle.textContent = '⏸'; els.playBtn.textContent = 'Pause Preview'; });
   els.audioEl.addEventListener('pause', () => { els.playerToggle.textContent = '▶'; els.playBtn.textContent = 'Play Preview'; });

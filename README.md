@@ -1,6 +1,6 @@
-# PAXLAB Subs - DEV2 AUTO
+# PAXLAB Subs - DEV2.1 AUTO PROGRESS
 
-Module autonome PAXLAB Subs. Objectif DEV2 : générer automatiquement des captions depuis un fichier audio et des paroles propres, sans serveur audio et sans upload.
+Module autonome PAXLAB Subs. Objectif DEV2.1 : génération automatique de captions depuis audio et paroles propres, avec suivi visible pendant le chargement modèle, la transcription et l’alignement.
 
 ## Workflow
 
@@ -8,32 +8,17 @@ Module autonome PAXLAB Subs. Objectif DEV2 : générer automatiquement des capti
 2. Laisser la langue sur `French - locked for PAX VI`.
 3. Coller les paroles propres.
 4. Cliquer sur `Generate Lyrics`.
-5. Prévisualiser la lecture synchronisée.
-6. Exporter SRT, VTT ou JSON.
+5. Suivre les indicateurs `Status`, `Phase`, `Elapsed` et `Engine`.
+6. Prévisualiser la lecture synchronisée.
+7. Exporter SRT, VTT ou JSON.
 
 ## Important
 
 - Le texte exporté reste le texte des paroles collées.
 - Aucune réécriture des paroles.
-- Une normalisation interne est utilisée uniquement pour aligner les mots détectés avec les mots des paroles.
 - Le moteur ASR est chargé uniquement au clic sur Generate Lyrics.
-- Le premier passage est plus long car le modèle est téléchargé et mis en cache par le navigateur.
-
-## Moteur auto
-
-DEV2 utilise Transformers.js via CDN avec Whisper multilingual. La langue par défaut est `french`.
-
-Modèles proposés :
-
-- Quality : `Xenova/whisper-small`
-- Balanced : `Xenova/whisper-base`
-- Fast test : `Xenova/whisper-tiny`
-
-Runtime proposé :
-
-- Auto : WebGPU si disponible, sinon WASM CPU.
-- WebGPU : meilleur choix si navigateur compatible.
-- WASM : fallback CPU plus lent.
+- Pendant l’appel Whisper, le navigateur ne fournit pas toujours un pourcentage exact. DEV2.1 ajoute donc un timer, une phase active et un indicateur de progression souple pour confirmer que le traitement continue.
+- Pour un test rapide, utiliser `Fast test - Whisper tiny FR`. Pour un meilleur résultat, utiliser `Balanced` ou `Quality`.
 
 ## Cloudflare Pages
 
@@ -45,4 +30,4 @@ Output directory: dist
 Root directory: laisser vide
 ```
 
-Le build est volontairement ultra léger : pas de dépendance npm, le script copie simplement les fichiers statiques dans `dist`.
+Le build reste statique et léger : pas de node_modules, pas de package-lock, pas de modèle embarqué.

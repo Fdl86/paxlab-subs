@@ -14,7 +14,7 @@
           <div>
             <div class="title-row">
               <h1>PAXLAB Subs</h1>
-              <span class="badge">DEV2 AUTO</span>
+              <span class="badge">DEV2.1 AUTO</span>
             </div>
             <p>Upload a song file, paste clean lyrics, generate synced captions, preview, then download SRT or VTT.</p>
           </div>
@@ -53,8 +53,8 @@
           <label class="field-block">
             <span class="field-label">Auto engine</span>
             <select id="modelSelect">
-              <option value="Xenova/whisper-small" selected>Quality - Whisper small FR</option>
-              <option value="Xenova/whisper-base">Balanced - Whisper base FR</option>
+              <option value="Xenova/whisper-base" selected>Balanced - Whisper base FR</option>
+              <option value="Xenova/whisper-small">Quality - Whisper small FR</option>
               <option value="Xenova/whisper-tiny">Fast test - Whisper tiny FR</option>
             </select>
           </label>
@@ -87,6 +87,12 @@
             <span id="statusText">Ready. Audio + lyrics required.</span>
           </div>
           <div class="progress-track"><div id="progressFill"></div></div>
+          <div class="status-meta">
+            <span id="phaseText">Phase: idle</span>
+            <span id="elapsedText">Elapsed: 0s</span>
+            <span id="engineText">Engine: not loaded</span>
+          </div>
+          <div class="progress-hint" id="progressHint">Progression détaillée affichée pendant le chargement modèle, la transcription et l'alignement.</div>
         </section>
 
         <section class="preview-card" id="previewCard" hidden>

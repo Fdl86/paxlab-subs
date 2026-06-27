@@ -365,3 +365,29 @@ h1 {
   .player-bar { margin-left: 0; margin-right: 0; }
   .subtitle-box { width: 94%; padding: 18px; }
 }
+.status-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.status-meta span {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress-hint {
+  margin-top: 10px;
+  color: #40506c;
+  font-size: 12px;
+  line-height: 1.35;
+}
+@media (max-width: 720px) {
+  .status-meta { grid-template-columns: 1fr; }
+}
