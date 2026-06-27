@@ -1,0 +1,14 @@
+{
+  "name": "paxlab-lyrics-sync-dev0",
+  "private": true,
+  "version": "0.0.1-dev0",
+  "type": "module",
+  "description": "Prototype leger PAXLAB Lyrics Sync - lecteur audio + sous-titres + surlignage mot actif.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "serve": "python3 -m http.server 5173"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

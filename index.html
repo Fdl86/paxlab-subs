@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PAXLAB Lyrics Sync - DEV0</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">PAXLAB MODULE</p>
+          <h1>Lyrics Sync</h1>
+          <p class="subtitle">Lecteur audio local, sous-titres synchronisés et surlignage du mot actif. Langue audio verrouillée en français.</p>
+        </div>
+        <div class="status-card">
+          <span class="status-dot"></span>
+          <span>Langue moteur</span>
+          <strong>Français · fr-FR</strong>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="panel player-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Preview</p>
+              <h2>Lecture synchronisée</h2>
+            </div>
+            <span id="caption-count" class="chip">0 cue</span>
+          </div>
+
+          <div class="stage" aria-live="polite">
+            <div class="ambient"></div>
+            <div id="prev-line" class="lyric-side"></div>
+            <div id="active-line" class="lyric-active">Charge un audio et un SRT/VTT</div>
+            <div id="next-line" class="lyric-side"></div>
+          </div>
+
+          <div class="transport">
+            <button id="play-btn" class="icon-btn" type="button" aria-label="Lecture pause">▶</button>
+            <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" />
+            <div class="time"><span id="current-time">0:00</span><span>/</span><span id="duration">0:00</span></div>
+            <input id="volume" class="volume" type="range" min="0" max="1" value="0.9" step="0.01" aria-label="Volume" />
+          </div>
+          <audio id="audio" preload="metadata"></audio>
+        </article>
+
+        <aside class="panel controls-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Sources</p>
+              <h2>Import local</h2>
+            </div>
+          </div>
+
+          <label class="drop-row">
+            <span>Audio MP3/WAV</span>
+            <input id="audio-file" type="file" accept="audio/*" />
+          </label>
+          <label class="drop-row">
+            <span>SRT ou VTT</span>
+            <input id="caption-file" type="file" accept=".srt,.vtt,text/vtt,text/plain" />
+          </label>
+          <label class="drop-row">
+            <span>Paroles propres</span>
+            <input id="lyrics-file" type="file" accept=".txt,text/plain" />
+          </label>
+
+          <button id="sample-btn" class="secondary-btn" type="button">Charger l’exemple Vercingétorix</button>
+
+          <div class="setting-row">
+            <label for="offset">Offset global</label>
+            <div class="offset-tools">
+              <button id="offset-minus" type="button">-0.1s</button>
+              <input id="offset" type="number" value="0" min="-60" max="60" step="0.1" />
+              <button id="offset-plus" type="button">+0.1s</button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label for="highlight-mode">Surlignage</label>
+            <select id="highlight-mode">
+              <option value="weighted" selected>Mot actif - pondéré</option>
+              <option value="linear">Mot actif - linéaire</option>
+              <option value="none">Ligne uniquement</option>
+            </select>
+          </div>
+
+          <div class="actions">
+            <button id="export-srt" class="primary-btn" type="button">Exporter SRT</button>
+            <button id="export-vtt" class="primary-btn" type="button">Exporter VTT</button>
+            <button id="export-json" class="primary-btn" type="button">Exporter JSON</button>
+          </div>
+        </aside>
+      </section>
+
+      <section class="grid lower-grid">
+        <article class="panel lyrics-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Texte source</p>
+              <h2>Paroles propres</h2>
+            </div>
+            <span id="lyrics-count" class="chip">0 ligne</span>
+          </div>
+          <textarea id="lyrics" spellcheck="false" placeholder="Colle ici les paroles propres. Le prototype DEV0 ne nettoie rien et ne modifie rien."></textarea>
+        </article>
+
+        <article class="panel timeline-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Timeline</p>
+              <h2>Cues importées</h2>
+            </div>
+            <span id="active-cue" class="chip">--</span>
+          </div>
+          <div id="timeline" class="timeline"></div>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="./dist/main.js"></script>
+  </body>
+</html>
