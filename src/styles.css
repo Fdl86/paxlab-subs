@@ -193,3 +193,15 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .ps-active-line { font-size: 30px; }
   .ps-subtitle-box { width: 100%; }
 }
+
+.ps-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  margin: 8px 0 0;
+  color: var(--ps-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+.ps-check input { accent-color: var(--ps-gold); }

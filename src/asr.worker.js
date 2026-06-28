@@ -1,4 +1,4 @@
-const APP_VERSION = 'DEV2.9';
+const APP_VERSION = 'DEV2.10';
 const ASR_SAMPLE_RATE = 16000;
 const TRANSFORMERS_URLS = [
   'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2',
@@ -8,9 +8,10 @@ const TRANSFORMERS_URLS = [
 ];
 
 const FALLBACK_MODELS = new Map([
-  ['onnx-community/whisper-tiny_timestamped', 'Xenova/whisper-tiny'],
-  ['onnx-community/whisper-base_timestamped', 'Xenova/whisper-base'],
-  ['onnx-community/whisper-small_timestamped', 'Xenova/whisper-small'],
+  ['onnx-community/whisper-tiny_timestamped', ['Xenova/whisper-tiny']],
+  ['onnx-community/whisper-base_timestamped', ['Xenova/whisper-base']],
+  ['onnx-community/whisper-small_timestamped', ['Xenova/whisper-small']],
+  ['onnx-community/whisper-large-v3-turbo_timestamped', ['onnx-community/whisper-large-v3-turbo', 'Xenova/whisper-large-v3-turbo']],
 ]);
 
 const pipelineCache = new Map();
@@ -63,35 +64,36 @@ function configureEnv(env) {
 async function loadPipeline(model, device, progressId = '') {
   const { pipeline, env } = await importTransformers();
   configureEnv(env);
-  const key = `${model}::${device}`;
-  if (pipelineCache.has(key)) return pipelineCache.get(key);
+  const candidates = [model, ...(FALLBACK_MODELS.get(model) || [])];
+  let lastError = null;
 
-  post('status', { text: `Chargement modèle ${model} (${device})...` });
-  const options = {
-    device,
-    progress_callback: (event) => {
-      if (event?.status === 'progress' && Number.isFinite(event.progress)) {
-        post('progress', { phase: 'model', pct: Math.max(0, Math.min(55, event.progress * 0.55)), file: event.file || '', progressId });
-      } else if (event?.status) {
-        post('status', { text: `Modèle: ${event.status}${event.file ? ` - ${event.file}` : ''}` });
-      }
-    },
-  };
+  for (const candidate of candidates) {
+    const key = `${candidate}::${device}`;
+    if (pipelineCache.has(key)) return pipelineCache.get(key);
 
-  try {
-    const transcriber = await pipeline('automatic-speech-recognition', model, options);
-    pipelineCache.set(key, transcriber);
-    return transcriber;
-  } catch (error) {
-    const fallback = FALLBACK_MODELS.get(model);
-    if (!fallback) throw error;
-    post('status', { text: `Modèle timestamped indisponible. Repli ${fallback}.` });
-    const fallbackKey = `${fallback}::${device}`;
-    if (pipelineCache.has(fallbackKey)) return pipelineCache.get(fallbackKey);
-    const transcriber = await pipeline('automatic-speech-recognition', fallback, options);
-    pipelineCache.set(fallbackKey, transcriber);
-    return transcriber;
+    post('status', { text: `Chargement modèle ${candidate} (${device})...` });
+    const options = {
+      device,
+      progress_callback: (event) => {
+        if (event?.status === 'progress' && Number.isFinite(event.progress)) {
+          post('progress', { phase: 'model', pct: Math.max(0, Math.min(55, event.progress * 0.55)), file: event.file || '', progressId });
+        } else if (event?.status) {
+          post('status', { text: `Modèle: ${event.status}${event.file ? ` - ${event.file}` : ''}` });
+        }
+      },
+    };
+
+    try {
+      const transcriber = await pipeline('automatic-speech-recognition', candidate, options);
+      pipelineCache.set(key, transcriber);
+      if (candidate !== model) post('status', { text: `Repli modèle actif: ${candidate}.` });
+      return transcriber;
+    } catch (error) {
+      lastError = error;
+      if (candidate === model && candidates.length > 1) post('status', { text: `Modèle principal indisponible. Tentative de repli...` });
+    }
   }
+  throw lastError || new Error(`Impossible de charger le modèle ${model}.`);
 }
 
 function extractAsrWords(output) {
@@ -114,7 +116,7 @@ function extractAsrWords(output) {
 }
 
 async function runTranscription(message) {
-  const { pcm, model, device, language, progressId } = message;
+  const { pcm, model, device, language, lyricsPrompt = '', progressId } = message;
   if (!(pcm instanceof Float32Array)) throw new Error('PCM invalide côté worker.');
   const runtime = device || 'wasm';
   const transcriber = await loadPipeline(model, runtime, progressId);
@@ -127,8 +129,15 @@ async function runTranscription(message) {
     return_timestamps: 'word',
     chunk_length_s: 30,
     stride_length_s: 5,
+    condition_on_prev_tokens: false,
   };
   if (language) options.language = language;
+  if (lyricsPrompt) {
+    try {
+      options.prompt = String(lyricsPrompt).slice(0, 1400);
+      post('status', { text: 'Reconnaissance guidée par les paroles: ON.' });
+    } catch (_) {}
+  }
 
   try {
     options.callback_function = (item) => {

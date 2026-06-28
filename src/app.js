@@ -2,12 +2,13 @@ import {
   CPS_MAX,
   MIN_CUE_DURATION,
   buildCuesFromLyricsAndAsr,
+  enforceCueOrder,
   normalizeWord,
   splitCleanLyrics,
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.9';
+const APP_VERSION = 'DEV2.10';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -15,6 +16,7 @@ const MODEL_LABELS = new Map([
   ['onnx-community/whisper-tiny_timestamped', 'Whisper tiny'],
   ['onnx-community/whisper-base_timestamped', 'Whisper base'],
   ['onnx-community/whisper-small_timestamped', 'Whisper small'],
+  ['onnx-community/whisper-large-v3-turbo_timestamped', 'Whisper large-v3-turbo'],
 ]);
 
 const state = {
@@ -33,6 +35,7 @@ const state = {
   elapsedTimer: null,
   transcript: '',
   asrWords: [],
+  vocalOnsets: [],
   renderRequested: false,
 };
 
@@ -46,6 +49,8 @@ const els = {
   languageSelect: $('psLanguageSelect'),
   modelSelect: $('psModelSelect'),
   runtimeSelect: $('psRuntimeSelect'),
+  guideToggle: $('psGuideToggle'),
+  onsetToggle: $('psOnsetToggle'),
   lyricsInput: $('psLyricsInput'),
   generateBtn: $('psGenerateBtn'),
   stopBtn: $('psStopBtn'),
@@ -277,6 +282,7 @@ function resetApp() {
     startedAt: 0,
     transcript: '',
     asrWords: [],
+    vocalOnsets: [],
   });
   els.audioInput.value = '';
   els.audioEl.removeAttribute('src');
@@ -522,6 +528,93 @@ function createWorker() {
   return new Worker('./src/asr.worker.js', { type: 'module' });
 }
 
+function buildLyricsPrompt(lines) {
+  const unique = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const compact = String(line || '').replace(/\s+/g, ' ').trim();
+    const key = normalizeWord(compact).slice(0, 80);
+    if (!compact || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(compact);
+  }
+  const words = unique.join(', ').split(/\s+/).filter(Boolean);
+  return words.slice(0, 200).join(' ');
+}
+
+function vocalOnsets(pcm, sr = ASR_SAMPLE_RATE) {
+  if (!(pcm instanceof Float32Array) || !pcm.length) return [];
+  const frame = Math.max(160, Math.round(sr * 0.02));
+  const hop = Math.max(80, Math.round(sr * 0.01));
+  const energies = [];
+  let hpPrevX = 0;
+  let hpPrevY = 0;
+  const hpAlpha = Math.exp((-2 * Math.PI * 150) / sr);
+  const lpAlpha = Math.exp((-2 * Math.PI * 5500) / sr);
+  let lpY = 0;
+  const filtered = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i += 1) {
+    const x = pcm[i] || 0;
+    const hp = hpAlpha * (hpPrevY + x - hpPrevX);
+    hpPrevX = x;
+    hpPrevY = hp;
+    lpY = (1 - lpAlpha) * hp + lpAlpha * lpY;
+    filtered[i] = lpY;
+  }
+  for (let start = 0; start + frame <= filtered.length; start += hop) {
+    let sum = 0;
+    for (let i = start; i < start + frame; i += 1) sum += filtered[i] * filtered[i];
+    energies.push(Math.sqrt(sum / frame));
+  }
+  if (energies.length < 4) return [];
+  const sorted = [...energies].sort((a, b) => a - b);
+  const floor = sorted[Math.floor(sorted.length * 0.35)] || 1e-5;
+  const median = sorted[Math.floor(sorted.length * 0.5)] || floor;
+  const threshold = Math.max(floor * 2.5, median * 1.65, 1e-4);
+  const onsets = [];
+  let last = -1;
+  for (let i = 2; i < energies.length; i += 1) {
+    const prev = Math.max(energies[i - 1], 1e-6);
+    const curr = energies[i];
+    if (curr > threshold && curr / prev > 1.28 && (last < 0 || (i - last) * hop / sr > 0.18)) {
+      onsets.push((i * hop) / sr);
+      last = i;
+    }
+  }
+  return onsets;
+}
+
+function snapStart(start, onsets, lo, hi) {
+  let best = null;
+  let bestD = Infinity;
+  for (const t of onsets) {
+    if (t < lo || t > hi) continue;
+    const d = Math.abs(t - start);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return best;
+}
+
+function applyVocalOnsetSnapping(cues, onsets, duration) {
+  if (!Array.isArray(onsets) || !onsets.length || !Array.isArray(cues) || !cues.length) return cues;
+  let prevEnd = 0;
+  let changed = 0;
+  for (const cue of cues) {
+    const minDur = Math.max(MIN_CUE_DURATION, String(cue.text || '').length / CPS_MAX);
+    const lo = Math.max(prevEnd + 0.03, cue.start - 0.35);
+    const hi = Math.min(cue.end - minDur, cue.start + 0.12);
+    const snapped = hi > lo ? snapStart(cue.start, onsets, lo, hi) : null;
+    if (Number.isFinite(snapped)) {
+      cue.start = snapped;
+      changed += 1;
+    }
+    prevEnd = cue.end;
+  }
+  const ordered = enforceCueOrder(cues, duration);
+  ordered.snappedCount = changed;
+  return ordered;
+}
+
 async function generateAutoCaptions() {
   if (state.running) return;
   if (!state.audioFile) { setStatus('Ajoute d’abord un MP3 ou WAV.', 0); return; }
@@ -547,11 +640,18 @@ async function generateAutoCaptions() {
     setStatus('Préparation audio 16 kHz mono...', 8, 'Décodage local puis transfert zero-copy vers le Worker ASR.');
     setPhase('préparation audio');
     const pcm = await decodeAudioToMono16k(state.audioFile);
+    state.vocalOnsets = [];
+    if (els.onsetToggle?.checked) {
+      setStatus('Analyse locale des attaques vocales...', 18, 'Calcul VAD léger sur le PCM 16 kHz, sans upload.');
+      setPhase('analyse attaques');
+      state.vocalOnsets = vocalOnsets(pcm, ASR_SAMPLE_RATE);
+    }
     els.seekBar.disabled = false;
     els.timeDisplay.textContent = `0:00 / ${formatClock(state.duration)}`;
 
     const runtime = await resolveRuntime();
     const language = els.languageSelect.value === 'auto' ? undefined : (els.languageSelect.value || 'french');
+    const lyricsPrompt = els.guideToggle?.checked ? buildLyricsPrompt(lines) : '';
     state.worker = createWorker();
     const progressId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -588,6 +688,7 @@ async function generateAutoCaptions() {
       model: els.modelSelect.value,
       device: runtime,
       language,
+      lyricsPrompt,
       progressId,
     }, [pcm.buffer]);
   } catch (error) {
@@ -612,8 +713,13 @@ function onWorkerDone(words, text, lines) {
   }
   try {
     state.cues = buildCuesFromLyricsAndAsr(lines, words, state.duration);
+    let snapped = 0;
+    if (els.onsetToggle?.checked && state.vocalOnsets.length) {
+      state.cues = applyVocalOnsetSnapping(state.cues, state.vocalOnsets, state.duration);
+      snapped = state.cues.snappedCount || 0;
+    }
     setProgress(100);
-    setStatus(`Captions générées: ${state.cues.length} cues, ${words.length} mots ASR.`, 100, 'SRT, VTT et JSON prêts. Ajustements immédiats disponibles.');
+    setStatus(`Captions générées: ${state.cues.length} cues, ${words.length} mots ASR.`, 100, `SRT, VTT et JSON prêts. Snapping vocal: ${snapped} débuts ajustés.`);
     setPhase('terminé');
     renderCueList();
     renderTrack();
@@ -668,6 +774,9 @@ function cuesToJson(cues) {
     language: els.languageSelect.value === 'auto' ? 'auto' : 'fr-FR',
     model: els.modelSelect.value,
     runtime: els.runtimeSelect.value,
+    guidedRecognition: Boolean(els.guideToggle?.checked),
+    vocalOnsetSnap: Boolean(els.onsetToggle?.checked),
+    vocalOnsets: state.vocalOnsets.length,
     sourceAudio: state.audioFile?.name || null,
     duration: state.duration,
     asrWords: state.asrWords.length,
@@ -735,7 +844,7 @@ function bindEvents() {
       const ok = await webgpuPreflight();
       setStatus(ok ? 'WebGPU préflight OK.' : 'WebGPU non utilisable ici.', ok ? 10 : 0, ok ? 'Tu peux tester WebGPU, mais WASM reste le défaut stable.' : 'Garde WASM CPU stable.');
     } else {
-      setStatus(`Runtime ${runtimeLabel()} prêt. Cross-origin isolated: ${self.crossOriginIsolated ? 'oui' : 'non'}.`, 0, 'Sur Cloudflare, _headers DEV2.9 tente d’activer COEP credentialless.');
+      setStatus(`Runtime ${runtimeLabel()} prêt. Cross-origin isolated: ${self.crossOriginIsolated ? 'oui' : 'non'}.`, 0, 'Sur Cloudflare, _headers DEV2.10 tente d’activer COEP credentialless.');
     }
   });
   els.modelSelect.addEventListener('change', updateEngineSummary);

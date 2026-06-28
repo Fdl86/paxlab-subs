@@ -1,4 +1,4 @@
-# PAXLAB Subs - DEV2.9
+# PAXLAB Subs - DEV2.10
 
 Module autonome destiné à être intégré plus tard dans PAXLAB.
 
@@ -7,25 +7,25 @@ Module autonome destiné à être intégré plus tard dans PAXLAB.
 Créer localement des sous-titres SRT/VTT/JSON depuis :
 
 - un fichier audio MP3/WAV ;
-- des paroles propres collées telles quelles ;
+- des paroles propres collées par l’utilisateur ;
 - une transcription Whisper exécutée côté navigateur.
 
-Aucun upload, aucun backend.
+Aucun upload, aucun backend. Le texte exporté reste toujours celui des paroles utilisateur ; l’ASR ne sert qu’au timing.
 
-## DEV2.9
+## DEV2.10
 
-Cette version refond le moteur :
+Cette version améliore la détection en une passe Tier 1 :
 
-- ASR dans un Web Worker module ;
-- un seul appel Whisper avec chunking natif 30 s et stride 5 s ;
-- décodage/resampling audio via OfflineAudioContext en mono 16 kHz ;
-- alignement global Needleman-Wunsch entre paroles propres et mots ASR ;
-- contraintes CPS pour éviter les cues trop rapides ;
-- rendu preview anti-jank : la ligne active n'est plus reconstruite à chaque frame ;
-- piste temporelle légère avec blocs de cues et tête de lecture ;
-- édition directe start/end + boutons +/-0.05 s ;
-- `_headers` Cloudflare avec COOP/COEP credentialless ;
-- tests Node pour l'aligneur.
+- prompt compact construit depuis les paroles pour guider Whisper, toggle ON par défaut ;
+- `condition_on_prev_tokens:false` pour limiter l’emballement/hallucination ;
+- matching phonétique FR léger dans l’alignement Needleman-Wunsch ;
+- précalcul des clés phonétiques pour garder l’alignement rapide ;
+- snapping local des débuts de cues sur les attaques vocales, toggle ON par défaut ;
+- suppression des balises de structure Suno/Udio dans le parsing ;
+- éclatement des élisions FR uniquement pour le matching, sans changer le texte affiché/exporté ;
+- ajout du modèle lourd `large-v3-turbo` dans le sélecteur ;
+- fallback modèle robuste côté worker ;
+- tests d’alignement étendus.
 
 ## Cloudflare Pages
 
@@ -51,4 +51,4 @@ npm test
 
 ## Notes
 
-Runtime par défaut : WASM CPU stable. WebGPU reste expérimental.
+Runtime par défaut : WASM CPU stable. WebGPU reste expérimental. `large-v3-turbo` est volontairement étiqueté lourd et n’est pas sélectionné par défaut.

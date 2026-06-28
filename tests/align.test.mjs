@@ -1,17 +1,26 @@
 import assert from 'node:assert/strict';
-import { buildCuesFromLyricsAndAsr, flattenLyrics, alignWordsNW, splitCleanLyrics, normalizeWord } from '../src/align.js';
+import {
+  alignWordsNW,
+  buildCuesFromLyricsAndAsr,
+  flattenLyrics,
+  matchScore,
+  normalizeWord,
+  phoneticKey,
+  splitCleanLyrics,
+} from '../src/align.js';
 
 function asr(tokens, start = 0) {
   let cursor = start;
   return tokens.map((text) => {
-    const word = { text, norm: normalizeWord(text), start: cursor, end: cursor + 0.28 };
+    const norm = normalizeWord(text);
+    const word = { text, norm, phon: phoneticKey(norm), start: cursor, end: cursor + 0.28 };
     cursor += 0.36;
     return word;
   });
 }
 
 function alignedTexts(lines, words) {
-  return alignWordsNW(flattenLyrics(lines), words, 120).filter((w) => w.matched).map((w) => w.text);
+  return alignWordsNW(flattenLyrics(lines), words, 120).filter((w) => w.matched).map((w) => w.displayText || w.text);
 }
 
 {
@@ -59,6 +68,32 @@ function alignedTexts(lines, words) {
   const cues = buildCuesFromLyricsAndAsr(lines, [], 10);
   assert.equal(cues.length, 2);
   assert.ok(cues[1].start > cues[0].start);
+}
+
+{
+  assert.ok(matchScore(normalizeWord('chez'), normalizeWord('ché')) > 0, 'phonetic chez/ché must anchor');
+  assert.ok(matchScore(normalizeWord('cette'), normalizeWord('cet')) > 0, 'phonetic cette/cet must anchor');
+  const lines = ['chez cette maison'];
+  const matched = alignedTexts(lines, asr(['ché', 'cet', 'maison']));
+  assert.deepEqual(matched, ['chez', 'cette', 'maison']);
+}
+
+{
+  const lines = ["l'amour reste là"];
+  const lyricsWords = flattenLyrics(lines);
+  assert.equal(lyricsWords[0].text, 'l');
+  assert.equal(lyricsWords[1].text, 'amour');
+  const cues = buildCuesFromLyricsAndAsr(lines, asr(['l', 'amour', 'reste', 'là']), 20);
+  assert.equal(cues[0].text, "l'amour reste là");
+  assert.deepEqual(cues[0].words.map((w) => w.text), ["l'amour", 'reste', 'là']);
+}
+
+{
+  const lines = splitCleanLyrics('[Verse 1]\nDebout soldats\n(Chorus)\nVercingétorix !');
+  assert.deepEqual(lines, ['Debout soldats', 'Vercingétorix !']);
+  const cues = buildCuesFromLyricsAndAsr(lines, asr(['Debout', 'soldats', 'Vercingétorix']), 20);
+  assert.equal(cues.length, 2);
+  assert.equal(cues[0].text, 'Debout soldats');
 }
 
 console.log('align.test.mjs OK');

@@ -1,5 +1,17 @@
 # Changelog
 
+## DEV2.10 - improve detection tier 1
+
+- Ajout d’un prompt compact basé sur les paroles pour guider Whisper.
+- Ajout des toggles `Guider Whisper avec les paroles` et `Aligner sur l’attaque vocale`.
+- Ajout du matching phonétique FR dans l’alignement global.
+- Précalcul des clés phonétiques pour éviter le surcoût dans la DP.
+- Ajout du snapping VAD local des débuts de cues.
+- Suppression des balises de structure Suno/Udio dans le parsing.
+- Éclatement des élisions FR uniquement pour densifier les ancres d’alignement.
+- Ajout du modèle lourd `large-v3-turbo` avec fallback côté worker.
+- Extension des tests d’alignement : phonétique, élisions, balises et non-régressions.
+
 ## DEV2.9 - ASR worker and global alignment
 
 - Refactor majeur du pipeline ASR.

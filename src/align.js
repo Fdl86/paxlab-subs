@@ -1,6 +1,10 @@
 export const MIN_CUE_DURATION = 0.85;
 export const CPS_MAX = 17;
 
+const STRUCTURE_MARKERS = /\((?:intro|outro|verse|couplet|chorus|refrain|bridge|pont|hook|pre[-\s]?chorus|pré[-\s]?refrain|pre[-\s]?refrain|break|solo|instrumental)\)/gi;
+const STRUCTURE_LINE = /^(?:intro|outro|verse|couplet|chorus|refrain|bridge|pont|hook|pre[-\s]?chorus|pré[-\s]?refrain|pre[-\s]?refrain|break|solo|instrumental)(?:\s*\d+)?$/i;
+const ELISION_PREFIXES = new Set(['l', 'd', 'j', 'm', 't', 's', 'n', 'c', 'qu', 'lorsqu', 'jusqu', 'puisqu', 'quoiqu']);
+
 export function normalizeWord(text) {
   return String(text || '')
     .toLowerCase()
@@ -13,24 +17,79 @@ export function normalizeWord(text) {
     .trim();
 }
 
+export function phoneticKey(norm) {
+  if (!norm) return '';
+  let s = String(norm || '')
+    .replace(/'/g, '')
+    .replace(/ph/g, 'f')
+    .replace(/ch/g, 'sh')
+    .replace(/gu(?=[ei])/g, 'g')
+    .replace(/qu/g, 'k')
+    .replace(/q/g, 'k')
+    .replace(/(^|[^s])c(?=[eiy])/g, '$1s')
+    .replace(/ç/g, 's')
+    .replace(/c/g, 'k')
+    .replace(/[èéêë]/g, 'e')
+    .replace(/h/g, '')
+    .replace(/(.)\1+/g, '$1');
+  // Terminaisons muettes fréquentes FR, mais conservatrices pour éviter les faux positifs.
+  s = s.replace(/(ent|es)$/g, '');
+  s = s.replace(/[zxdp]$/g, '');
+  if (s.length >= 4) s = s.replace(/e$/g, '');
+  s = s.replace(/[aeiouy]+/g, 'a');
+  return s;
+}
+
 export function tokenizeDisplayLine(text) {
   return String(text || '').match(/\S+/g) || [];
+}
+
+function stripStructureMarkers(line) {
+  const withoutBrackets = String(line || '').replace(/\[[^\]]+\]/g, ' ');
+  const withoutParens = withoutBrackets.replace(STRUCTURE_MARKERS, ' ');
+  const cleaned = withoutParens.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  if (STRUCTURE_LINE.test(cleaned)) return '';
+  return cleaned;
 }
 
 export function splitCleanLyrics(raw) {
   return String(raw || '')
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .map((line) => line.trim())
+    .map((line) => stripStructureMarkers(line))
     .filter(Boolean);
+}
+
+function alignmentTokensFromDisplayToken(text, lineIndex, wordIndex) {
+  const norm = normalizeWord(text);
+  if (!norm) return [{ text, norm, phon: '', lineIndex, wordIndex, start: null, end: null, score: 0, matched: false, displayText: text }];
+  const apostrophe = norm.match(/^([a-z]{1,7})'([a-z0-9]+)$/i);
+  if (apostrophe && ELISION_PREFIXES.has(apostrophe[1])) {
+    const left = apostrophe[1];
+    const right = apostrophe[2];
+    return [left, right].filter(Boolean).map((part, subIndex) => ({
+      text: part,
+      norm: part,
+      phon: phoneticKey(part),
+      lineIndex,
+      wordIndex,
+      subIndex,
+      start: null,
+      end: null,
+      score: 0,
+      matched: false,
+      displayText: text,
+    }));
+  }
+  return [{ text, norm, phon: phoneticKey(norm), lineIndex, wordIndex, start: null, end: null, score: 0, matched: false, displayText: text }];
 }
 
 export function flattenLyrics(lines) {
   const words = [];
   lines.forEach((line, lineIndex) => {
     tokenizeDisplayLine(line).forEach((text, wordIndex) => {
-      const norm = normalizeWord(text);
-      words.push({ text, norm, lineIndex, wordIndex, start: null, end: null, score: 0, matched: false });
+      words.push(...alignmentTokensFromDisplayToken(text, lineIndex, wordIndex));
     });
   });
   return words;
@@ -53,7 +112,7 @@ function levenshtein(a, b) {
   return prev[b.length];
 }
 
-function ratioSimilarity(a, b) {
+export function ratioSimilarity(a, b) {
   if (!a || !b) return 0;
   if (a === b) return 1;
   if (a.length <= 2 || b.length <= 2) return 0;
@@ -61,14 +120,19 @@ function ratioSimilarity(a, b) {
   return 1 - levenshtein(a, b) / Math.max(a.length, b.length);
 }
 
-export function matchScore(a, b) {
-  if (!a || !b) return -1.15;
-  if (a === b) return 2.2;
-  const sim = ratioSimilarity(a, b);
+function pairScore(aNorm, aPhon, bNorm, bPhon) {
+  if (!aNorm || !bNorm) return -1.15;
+  if (aNorm === bNorm) return 2.2;
+  const sim = ratioSimilarity(aNorm, bNorm);
   if (sim >= 0.88) return 1.25;
-  if (sim >= 0.76 && Math.max(a.length, b.length) >= 5) return 0.45;
-  if ((a.startsWith(b) || b.startsWith(a)) && Math.min(a.length, b.length) >= 4) return 0.25;
+  if (aPhon && aPhon === bPhon && Math.min(aNorm.length, bNorm.length) >= 3) return 1.4;
+  if (sim >= 0.76 && Math.max(aNorm.length, bNorm.length) >= 5) return 0.45;
+  if ((aNorm.startsWith(bNorm) || bNorm.startsWith(aNorm)) && Math.min(aNorm.length, bNorm.length) >= 4) return 0.25;
   return -0.85;
+}
+
+export function matchScore(a, b) {
+  return pairScore(a, phoneticKey(a), b, phoneticKey(b));
 }
 
 function averageWordDuration(anchors) {
@@ -136,9 +200,11 @@ function interpolateMissingWords(words, duration) {
 }
 
 export function alignWordsNW(lyricsWords, asrWords, duration = 0) {
-  const lyricIndexed = lyricsWords.map((word, index) => ({ ...word, globalIndex: index }));
+  const lyricIndexed = lyricsWords.map((word, index) => ({ ...word, phon: word.phon ?? phoneticKey(word.norm), globalIndex: index }));
   const A = lyricIndexed.filter((word) => word.norm);
-  const B = (asrWords || []).filter((word) => word?.norm && Number.isFinite(word.start));
+  const B = (asrWords || [])
+    .filter((word) => word?.norm && Number.isFinite(word.start))
+    .map((word) => ({ ...word, phon: word.phon ?? phoneticKey(word.norm) }));
   if (!A.length) return lyricIndexed;
   if (!B.length) return lyricIndexed;
 
@@ -152,8 +218,10 @@ export function alignWordsNW(lyricsWords, asrWords, duration = 0) {
   for (let j = 1; j <= n; j += 1) { dp[0][j] = j * GAP; tb[0][j] = 2; }
 
   for (let i = 1; i <= m; i += 1) {
+    const a = A[i - 1];
     for (let j = 1; j <= n; j += 1) {
-      const diag = dp[i - 1][j - 1] + matchScore(A[i - 1].norm, B[j - 1].norm);
+      const b = B[j - 1];
+      const diag = dp[i - 1][j - 1] + pairScore(a.norm, a.phon, b.norm, b.phon);
       const up = dp[i - 1][j] + GAP;
       const left = dp[i][j - 1] + GAP;
       let best = diag;
@@ -173,7 +241,7 @@ export function alignWordsNW(lyricsWords, asrWords, duration = 0) {
     if (i > 0 && j > 0 && dir === 0) {
       const lyric = A[i - 1];
       const asr = B[j - 1];
-      const score = matchScore(lyric.norm, asr.norm);
+      const score = pairScore(lyric.norm, lyric.phon, asr.norm, asr.phon);
       if (score >= 0) {
         const target = aligned[lyric.globalIndex];
         target.start = asr.start;
@@ -204,7 +272,7 @@ function proportionalCueFallback(lines, duration) {
     const minDur = Math.max(MIN_CUE_DURATION, line.length / CPS_MAX);
     const weighted = Math.max(minDur, safeDuration * 0.88 * (Math.max(1, line.length) / totalChars));
     const start = cursor;
-    const end = index === lines.length - 1 ? Math.min(safeDuration, start + weighted) : Math.min(safeDuration, start + weighted);
+    const end = Math.min(safeDuration + 0.5, start + weighted);
     cursor = end + 0.12;
     return { id: index + 1, start, end, text: line, confidence: 0, words: spreadCueWords(line, start, end) };
   });
@@ -223,6 +291,7 @@ export function spreadCueWords(line, start, end) {
     const word = {
       text: token,
       norm: normalizeWord(token),
+      phon: phoneticKey(normalizeWord(token)),
       start: cursor,
       end: index === tokens.length - 1 ? safeEnd : cursor + duration,
     };
@@ -232,14 +301,17 @@ export function spreadCueWords(line, start, end) {
 }
 
 function retimeCueWords(words, start, end, line) {
+  const displayTokens = tokenizeDisplayLine(line);
   const display = (words || []).filter((word) => word?.text);
-  if (!display.length) return spreadCueWords(line, start, end);
+  const wordTextMatchesDisplay = display.length === displayTokens.length && display.every((word, index) => word.displayText ? word.displayText === displayTokens[index] : word.text === displayTokens[index]);
+  if (!display.length || !wordTextMatchesDisplay) return spreadCueWords(line, start, end);
   const oldStart = Math.min(...display.map((word) => Number.isFinite(word.start) ? word.start : start));
   const oldEnd = Math.max(...display.map((word) => Number.isFinite(word.end) ? word.end : end));
   const oldDuration = Math.max(0.001, oldEnd - oldStart);
   const newDuration = Math.max(0.001, end - start);
   return display.map((word) => ({
     ...word,
+    text: word.displayText || word.text,
     start: start + (((Number.isFinite(word.start) ? word.start : oldStart) - oldStart) / oldDuration) * newDuration,
     end: start + (((Number.isFinite(word.end) ? word.end : oldEnd) - oldStart) / oldDuration) * newDuration,
   }));
