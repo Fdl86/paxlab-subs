@@ -11,7 +11,7 @@ import {
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.11.11';
+const APP_VERSION = 'DEV2.11.12';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -635,9 +635,9 @@ function retimeWords(cue, newStart, newEnd) {
   }));
 }
 
-function applyCueTimes(index, start, end) {
+function applyCueTimes(index, start, end, options = {}) {
   const cue = state.cues[index];
-  if (!cue) return;
+  if (!cue) return -1;
   const minDur = Math.max(MIN_CUE_DURATION, cue.text.length / CPS_MAX);
   const safeStart = Math.max(0, Number(start));
   const safeEnd = Math.max(safeStart + minDur, Number(end));
@@ -648,11 +648,13 @@ function applyCueTimes(index, start, end) {
   state.cues.forEach((item, i) => { item.id = i + 1; });
   refreshCueQuality();
   const newIndex = state.cues.indexOf(cue);
+  const selectedIndex = options.selectNext ? Math.min(newIndex + 1, state.cues.length - 1) : newIndex;
   renderCueList();
   renderTrack();
-  updateCueSelection(newIndex);
+  updateCueSelection(selectedIndex);
   state.activeCueIndex = -1;
   requestRenderFrame();
+  return newIndex;
 }
 
 function adjustSelectedCue(kind, delta) {
@@ -666,7 +668,7 @@ function adjustSelectedCue(kind, delta) {
   applyCueTimes(state.selectedCueIndex, start, end);
 }
 
-function setSelectedCueEdge(edge) {
+function setSelectedCueEdge(edge, options = {}) {
   const index = state.selectedCueIndex;
   const cue = state.cues[index];
   if (!cue || !state.audioUrl) return;
@@ -674,9 +676,41 @@ function setSelectedCueEdge(edge) {
   const minDur = Math.max(MIN_CUE_DURATION, String(cue.text || '').length / CPS_MAX);
   if (edge === 'start') {
     applyCueTimes(index, marker, cue.end);
+    setStatus(`Début calé à ${formatCueTime(marker)}.`, null, 'Cue sélectionnée conservée.');
   } else if (edge === 'end') {
     const end = Math.max(marker, cue.start + minDur);
-    applyCueTimes(index, cue.start, end);
+    applyCueTimes(index, cue.start, end, { selectNext: Boolean(options.selectNext) });
+    setStatus(`Fin calée à ${formatCueTime(end)}${options.selectNext ? ' - cue suivante sélectionnée' : ''}.`, null, 'Workflow rapide Q/S/D actif.');
+  }
+}
+
+function isEditableShortcutTarget(target) {
+  return Boolean(target?.closest?.('input, textarea, select, [contenteditable="true"]'));
+}
+
+function togglePlayback() {
+  if (!state.audioUrl) return;
+  if (els.audioEl.paused) els.audioEl.play().catch(() => {});
+  else els.audioEl.pause();
+}
+
+function handleKeyboardShortcuts(event) {
+  if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (isEditableShortcutTarget(event.target)) return;
+  const key = event.key.toLowerCase();
+  if (key === ' ' || key === 's') {
+    event.preventDefault();
+    togglePlayback();
+    return;
+  }
+  if (key === 'q') {
+    event.preventDefault();
+    setSelectedCueEdge('start');
+    return;
+  }
+  if (key === 'd') {
+    event.preventDefault();
+    setSelectedCueEdge('end', { selectNext: true });
   }
 }
 
@@ -1134,11 +1168,8 @@ function bindEvents() {
     syncPlaybackAnchor();
     requestRenderFrame();
   });
-  els.playBtn.addEventListener('click', () => {
-    if (!state.audioUrl) return;
-    if (els.audioEl.paused) els.audioEl.play().catch(() => {});
-    else els.audioEl.pause();
-  });
+  els.playBtn.addEventListener('click', togglePlayback);
+  document.addEventListener('keydown', handleKeyboardShortcuts);
   els.generateBtn.addEventListener('click', generateAutoCaptions);
   els.stopBtn.addEventListener('click', stopGeneration);
   els.resetBtn.addEventListener('click', resetApp);
@@ -1171,7 +1202,7 @@ function bindEvents() {
   });
 
   if (els.setStartBtn) els.setStartBtn.addEventListener('click', () => setSelectedCueEdge('start'));
-  if (els.setEndBtn) els.setEndBtn.addEventListener('click', () => setSelectedCueEdge('end'));
+  if (els.setEndBtn) els.setEndBtn.addEventListener('click', () => setSelectedCueEdge('end', { selectNext: true }));
 
   els.downloadSrtBtn.addEventListener('click', () => downloadText(`${baseName()}.srt`, cuesToSrt(state.cues), 'text/plain;charset=utf-8'));
   els.downloadVttBtn.addEventListener('click', () => downloadText(`${baseName()}.vtt`, cuesToVtt(state.cues), 'text/vtt;charset=utf-8'));

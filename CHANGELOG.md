@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## DEV2.11.12 - Keyboard shortcuts and selected cue focus
+
+- Ajout des raccourcis clavier Q/S/D pour le workflow de correction rapide.
+- `Q` cale le début de la cue sélectionnée sur le marqueur.
+- `S` et `Espace` lancent ou stoppent la lecture, hors champs texte.
+- `D` cale la fin de la cue sur le marqueur puis sélectionne automatiquement la cue suivante.
+- Contour significatif ajouté pour distinguer la cue sélectionnée de la cue active en lecture.
+- Rappel discret des raccourcis dans la zone Timeline.
+- Aucun changement moteur, modèle, détection ou export.
+
+
 ## DEV2.11.11 - Smooth timeline and active cue focus
 
 - Lissage visuel de la ligne de temps pendant la lecture avec horloge UI basée sur `requestAnimationFrame`.

@@ -1,8 +1,17 @@
-# PAXLAB Subs - DEV2.11.11
+# PAXLAB Subs - DEV2.11.12
 
 Module local de génération et prévisualisation de sous-titres PAXLAB.
 
-DEV2.11.11 est une passe UX ciblée après validation du workflow de correction : la ligne de temps est plus fluide pendant la lecture, le marqueur de lecture est mis à jour avec une horloge lissée, la range utilise une résolution plus fine, et la cue active est fortement mise en avant avec un fond champagne. Le moteur DEV2.11.9/DEV2.11.10 reste inchangé.
+DEV2.11.12 est une passe UX ciblée sur le montage rapide : raccourcis clavier Q/S/D, sélection visuelle renforcée, et passage automatique à la cue suivante après calage de la fin. Le moteur DEV2.11.9/DEV2.11.10/DEV2.11.11 reste inchangé.
+
+## Raccourcis
+
+- `Q` : caler le début de la cue sélectionnée sur le marqueur.
+- `S` : Play / Pause.
+- `Espace` : Play / Pause.
+- `D` : caler la fin de la cue sélectionnée sur le marqueur puis sélectionner la cue suivante.
+
+Les raccourcis sont ignorés pendant l'édition d'un champ texte ou timing.
 
 ## Cloudflare Pages
 
