@@ -1,10 +1,10 @@
 # CHANGELOG
 
-## DEV2.11.4 - Direct ONNX French CTC
+## DEV2.11.5 - CTC q8 automatique
 
-- Charge `Poulpidot/wav2vec2-large-xlsr-53-french-onnx` via ONNX Runtime direct.
-- N'utilise plus AutoTokenizer pour ce modèle, donc plus de recherche de `tokenizer.json`.
-- Charge `vocab.json`, `preprocessor_config.json`, `special_tokens_map.json` et `tokenizer_config.json` manuellement.
-- Lance `model.onnx` avec `InferenceSession` ORT Web.
-- Conserve les diagnostics CTC : modèle, session, inputs, outputs, logits, tokens, segments.
-- Fallback ASR propre si le modèle ONNX direct échoue.
+- Remplace le CTC direct ONNX lourd par un chargement Transformers.js automatique.
+- Modèle CTC par défaut: `Xenova/wav2vec2-base-960h` avec `dtype: q8`.
+- Repli automatique: `onnx-community/wav2vec2-base-960h-ONNX`.
+- Ajoute un champ avancé pour surcharger l'ID du modèle CTC sans rebuild.
+- Messages UX explicites: téléchargement unique d'environ 90 Mo, cache navigateur, texte utilisateur conservé.
+- Conserve les fixes DEV2.11.2: vocab `tokens_to_ids`, processor obligatoire, vrais logits CTC uniquement.

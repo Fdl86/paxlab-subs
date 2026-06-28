@@ -1,14 +1,14 @@
-# PAXLAB Subs - DEV2.11.4
+# PAXLAB Subs - DEV2.11.5
 
-Module local de génération de sous-titres SRT/VTT/JSON depuis audio + paroles propres.
+Module local de génération de sous-titres depuis audio + paroles propres.
 
-DEV2.11.4 corrige le chargement CTC français en utilisant Poulpidot/wav2vec2-large-xlsr-53-french-onnx via ONNX Runtime direct : `model.onnx` + `vocab.json`, sans dépendre de `tokenizer.json`.
+DEV2.11.5 corrige le forced alignment CTC pour une stratégie zéro hébergement: modèle public pré-quantifié q8 chargé au runtime, mis en cache par le navigateur, et repli ASR si indisponible.
 
 ## Cloudflare Pages
 
 Build command: `npm run build`
 Output directory: `dist`
 
-## Tests
+## Commit recommandé
 
-`npm test`
+`DEV2.11.5 - switch CTC to automatic q8 model`
