@@ -1,8 +1,8 @@
-# PAXLAB Subs - DEV2.11.5
+# PAXLAB Subs - DEV2.11.6
 
 Module local de génération de sous-titres SRT/VTT/JSON depuis audio + paroles propres.
 
-DEV2.11.5 rend l'alignement forcé CTC 100 % automatique et léger : modèle wav2vec2 CTC public déjà quantifié (`Xenova/wav2vec2-base-960h`, q8 ~90 Mo) chargé via transformers.js, tokenizer construit depuis `vocab.json` (plus de dépendance à `tokenizer.json`). Le modèle FR fp32 1,26 Go est abandonné. Acoustique EN servant à caler le texte FR connu ; texte exporté = paroles utilisateur.
+DEV2.11.6 garde la base CTC automatique q8 fonctionnelle de DEV2.11.5 et améliore le calage : fenêtres CTC larges et multi-lignes, étiquetage par mot `lineIndex/wordIndex`, snapping vocal adaptatif réellement actif, et gating de confiance pour éviter les substitutions CTC douteuses.
 
 ## Cloudflare Pages
 

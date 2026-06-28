@@ -10,7 +10,7 @@ import {
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.11.5';
+const APP_VERSION = 'DEV2.11.6';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -612,6 +612,12 @@ function buildLyricsPrompt(lines) {
   return words.slice(0, 200).join(' ');
 }
 
+function percentile(sorted, ratio) {
+  if (!sorted.length) return 0;
+  const index = Math.max(0, Math.min(sorted.length - 1, Math.floor(sorted.length * ratio)));
+  return sorted[index] || 0;
+}
+
 function vocalOnsets(pcm, sr = ASR_SAMPLE_RATE) {
   if (!(pcm instanceof Float32Array) || !pcm.length) return [];
   const frame = Math.max(160, Math.round(sr * 0.02));
@@ -637,16 +643,31 @@ function vocalOnsets(pcm, sr = ASR_SAMPLE_RATE) {
     energies.push(Math.sqrt(sum / frame));
   }
   if (energies.length < 4) return [];
-  const sorted = [...energies].sort((a, b) => a - b);
-  const floor = sorted[Math.floor(sorted.length * 0.35)] || 1e-5;
-  const median = sorted[Math.floor(sorted.length * 0.5)] || floor;
-  const threshold = Math.max(floor * 2.5, median * 1.65, 1e-4);
+
+  const smooth = energies.map((value, index) => {
+    const a = energies[Math.max(0, index - 1)] || value;
+    const b = value;
+    const c = energies[Math.min(energies.length - 1, index + 1)] || value;
+    return (a + b * 2 + c) / 4;
+  });
+  const sorted = [...smooth].sort((a, b) => a - b);
+  const p50 = percentile(sorted, 0.50);
+  const p70 = percentile(sorted, 0.70);
+  const p90 = percentile(sorted, 0.90);
+  const energyThreshold = Math.max(1e-5, p50 + (p90 - p50) * 0.22, p70 * 0.82);
+
+  const diffs = [];
+  for (let i = 2; i < smooth.length; i += 1) diffs.push(Math.max(0, smooth[i] - smooth[i - 2]));
+  const diffSorted = diffs.sort((a, b) => a - b);
+  const diffThreshold = Math.max(1e-6, percentile(diffSorted, 0.72));
+
   const onsets = [];
   let last = -1;
-  for (let i = 2; i < energies.length; i += 1) {
-    const prev = Math.max(energies[i - 1], 1e-6);
-    const curr = energies[i];
-    if (curr > threshold && curr / prev > 1.28 && (last < 0 || (i - last) * hop / sr > 0.18)) {
+  for (let i = 2; i < smooth.length - 1; i += 1) {
+    const rising = smooth[i] - smooth[i - 2];
+    const localPeak = smooth[i] >= smooth[i - 1] && smooth[i] >= smooth[i + 1] * 0.92;
+    const ratio = smooth[i] / Math.max(smooth[i - 2], 1e-7);
+    if (smooth[i] > energyThreshold && rising >= diffThreshold && ratio > 1.10 && localPeak && (last < 0 || (i - last) * hop / sr > 0.14)) {
       onsets.push((i * hop) / sr);
       last = i;
     }
@@ -665,17 +686,31 @@ function snapStart(start, onsets, lo, hi) {
   return best;
 }
 
+function shouldSnapCueStart(cue) {
+  if (!cue) return false;
+  const forcedRatio = (cue.forcedWords || 0) / Math.max(1, (cue.words?.length || String(cue.text || '').split(/\s+/).filter(Boolean).length));
+  if (cue.timingSource !== 'forced-ctc') return true;
+  if ((cue.confidence || 0) < 0.78) return true;
+  if ((cue.ctcScore || 0) < 0.25) return true;
+  return forcedRatio < 0.65;
+}
+
 function applyVocalOnsetSnapping(cues, onsets, duration) {
   if (!Array.isArray(onsets) || !onsets.length || !Array.isArray(cues) || !cues.length) return cues;
   let prevEnd = 0;
   let changed = 0;
   for (const cue of cues) {
     const minDur = Math.max(MIN_CUE_DURATION, String(cue.text || '').length / CPS_MAX);
-    const lo = Math.max(prevEnd + 0.03, cue.start - 0.35);
-    const hi = Math.min(cue.end - minDur, cue.start + 0.12);
+    if (!shouldSnapCueStart(cue)) {
+      prevEnd = cue.end;
+      continue;
+    }
+    const lo = Math.max(prevEnd + 0.03, cue.start - 0.30);
+    const hi = Math.min(cue.end - 0.08, cue.start + 0.12);
     const snapped = hi > lo ? snapStart(cue.start, onsets, lo, hi) : null;
-    if (Number.isFinite(snapped)) {
+    if (Number.isFinite(snapped) && Math.abs(snapped - cue.start) > 0.015) {
       cue.start = snapped;
+      if (cue.end < cue.start + minDur) cue.end = cue.start + minDur;
       changed += 1;
     }
     prevEnd = cue.end;
