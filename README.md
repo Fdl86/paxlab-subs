@@ -1,54 +1,22 @@
-# PAXLAB Subs - DEV2.10
+# PAXLAB Subs - DEV2.11
 
-Module autonome destiné à être intégré plus tard dans PAXLAB.
+Module local de génération de sous-titres SRT/VTT/JSON depuis un audio et des paroles propres.
 
-## Objectif
+## DEV2.11
 
-Créer localement des sous-titres SRT/VTT/JSON depuis :
+Ajoute le Tier B optionnel : alignement forcé CTC.
 
-- un fichier audio MP3/WAV ;
-- des paroles propres collées par l’utilisateur ;
-- une transcription Whisper exécutée côté navigateur.
-
-Aucun upload, aucun backend. Le texte exporté reste toujours celui des paroles utilisateur ; l’ASR ne sert qu’au timing.
-
-## DEV2.10
-
-Cette version améliore la détection en une passe Tier 1 :
-
-- prompt compact construit depuis les paroles pour guider Whisper, toggle ON par défaut ;
-- `condition_on_prev_tokens:false` pour limiter l’emballement/hallucination ;
-- matching phonétique FR léger dans l’alignement Needleman-Wunsch ;
-- précalcul des clés phonétiques pour garder l’alignement rapide ;
-- snapping local des débuts de cues sur les attaques vocales, toggle ON par défaut ;
-- suppression des balises de structure Suno/Udio dans le parsing ;
-- éclatement des élisions FR uniquement pour le matching, sans changer le texte affiché/exporté ;
-- ajout du modèle lourd `large-v3-turbo` dans le sélecteur ;
-- fallback modèle robuste côté worker ;
-- tests d’alignement étendus.
+- Whisper + Needleman-Wunsch restent le chemin nominal.
+- Toggle OFF par défaut : `Alignement forcé CTC - précision max`.
+- Chargement à la demande d'un modèle wav2vec2 CTC dans `align.worker.js`.
+- Trellis CTC + backtracking par fenêtre de cue.
+- Substitution des temps mot quand l'alignement CTC réussit.
+- Repli transparent sur les timestamps ASR si le modèle, le vocabulaire ou un segment échoue.
 
 ## Cloudflare Pages
 
-Build command:
+Build command: `npm run build`
+Output directory: `dist`
+Root directory: vide
 
-```text
-npm run build
-```
-
-Output directory:
-
-```text
-dist
-```
-
-Root directory : laisser vide si les fichiers sont à la racine du repo.
-
-## Tests
-
-```bash
-npm test
-```
-
-## Notes
-
-Runtime par défaut : WASM CPU stable. WebGPU reste expérimental. `large-v3-turbo` est volontairement étiqueté lourd et n’est pas sélectionné par défaut.
+Traitement local : aucun upload du fichier audio.

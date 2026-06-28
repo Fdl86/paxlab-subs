@@ -305,6 +305,9 @@ function retimeCueWords(words, start, end, line) {
   const display = (words || []).filter((word) => word?.text);
   const wordTextMatchesDisplay = display.length === displayTokens.length && display.every((word, index) => word.displayText ? word.displayText === displayTokens[index] : word.text === displayTokens[index]);
   if (!display.length || !wordTextMatchesDisplay) return spreadCueWords(line, start, end);
+  if (display.some((word) => word.forced)) {
+    return display.map((word) => ({ ...word, text: word.displayText || word.text }));
+  }
   const oldStart = Math.min(...display.map((word) => Number.isFinite(word.start) ? word.start : start));
   const oldEnd = Math.max(...display.map((word) => Number.isFinite(word.end) ? word.end : end));
   const oldDuration = Math.max(0.001, oldEnd - oldStart);
@@ -390,6 +393,87 @@ export function buildCuesFromAlignedLines(lines, alignedWords, duration) {
   fillMissingCueEntries(entries, lines, duration);
   const cues = entries.map((entry, index) => ({ id: index + 1, ...entry }));
   return enforceCueOrder(cues, duration);
+}
+
+
+export function buildForcedAlignSegments(lines, cues, duration, padding = 0.45) {
+  if (!Array.isArray(lines) || !Array.isArray(cues)) return [];
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Math.max(...cues.map((cue) => cue?.end || 0), 0);
+  return cues.map((cue, lineIndex) => {
+    const text = String(lines[lineIndex] || cue?.text || '').trim();
+    const displayWords = tokenizeDisplayLine(text).map((wordText, wordIndex) => ({
+      text: wordText,
+      norm: normalizeWord(wordText),
+      phon: phoneticKey(normalizeWord(wordText)),
+      lineIndex,
+      wordIndex,
+    })).filter((word) => word.norm);
+    const cueStart = Number.isFinite(cue?.start) ? cue.start : 0;
+    const cueEnd = Number.isFinite(cue?.end) ? cue.end : cueStart + Math.max(MIN_CUE_DURATION, text.length / CPS_MAX);
+    return {
+      lineIndex,
+      text,
+      words: displayWords,
+      start: Math.max(0, cueStart - padding),
+      end: Math.min(safeDuration || cueEnd + padding, cueEnd + padding),
+    };
+  }).filter((segment) => segment.text && segment.words.length && segment.end > segment.start + 0.25);
+}
+
+export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
+  if (!Array.isArray(cues) || !cues.length || !Array.isArray(forcedWords) || !forcedWords.length) return cues;
+  const forcedMap = new Map();
+  for (const word of forcedWords) {
+    if (!Number.isInteger(word?.lineIndex) || !Number.isInteger(word?.wordIndex)) continue;
+    if (!Number.isFinite(word.start) || !Number.isFinite(word.end) || word.end <= word.start) continue;
+    const key = `${word.lineIndex}:${word.wordIndex}`;
+    const current = forcedMap.get(key);
+    if (!current || (word.score || 0) > (current.score || 0)) {
+      forcedMap.set(key, word);
+    }
+  }
+  if (!forcedMap.size) return cues;
+
+  let substituted = 0;
+  const next = cues.map((cue, lineIndex) => {
+    const displayTokens = tokenizeDisplayLine(cue.text);
+    const baseWords = spreadCueWords(cue.text, cue.start, cue.end).map((word, wordIndex) => {
+      const forced = forcedMap.get(`${lineIndex}:${wordIndex}`);
+      if (!forced) return { ...word, lineIndex, wordIndex, forced: false };
+      substituted += 1;
+      return {
+        ...word,
+        lineIndex,
+        wordIndex,
+        start: forced.start,
+        end: Math.max(forced.end, forced.start + 0.05),
+        score: forced.score ?? 0.75,
+        matched: true,
+        forced: true,
+      };
+    });
+    const forcedTimed = baseWords.filter((word) => word.forced && Number.isFinite(word.start) && Number.isFinite(word.end));
+    if (!forcedTimed.length) return { ...cue, words: cue.words?.length ? cue.words : baseWords };
+
+    // Conserver l'ordre interne et interpoler les mots non forcés entre les ancres CTC.
+    const timedWords = interpolateMissingWords(baseWords.map((word) => ({ ...word })), duration);
+    const allTimed = timedWords.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
+    const first = Math.min(...allTimed.map((word) => word.start));
+    const last = Math.max(...allTimed.map((word) => word.end));
+    const forcedRatio = forcedTimed.length / Math.max(1, displayTokens.length);
+    return {
+      ...cue,
+      start: Math.max(0, first - 0.04),
+      end: last + 0.1,
+      confidence: Math.max(cue.confidence || 0, Math.min(1, 0.55 + forcedRatio * 0.45)),
+      timingSource: 'forced-ctc',
+      forcedWords: forcedTimed.length,
+      words: timedWords,
+    };
+  });
+  const ordered = enforceCueOrder(next, duration);
+  ordered.forcedCount = substituted;
+  return ordered;
 }
 
 export function buildCuesFromLyricsAndAsr(lines, asrWords, duration) {

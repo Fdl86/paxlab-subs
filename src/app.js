@@ -1,14 +1,16 @@
 import {
   CPS_MAX,
   MIN_CUE_DURATION,
+  applyForcedAlignmentToCues,
   buildCuesFromLyricsAndAsr,
+  buildForcedAlignSegments,
   enforceCueOrder,
   normalizeWord,
   splitCleanLyrics,
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.10';
+const APP_VERSION = 'DEV2.11';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -30,6 +32,9 @@ const state = {
   cueRows: [],
   currentWordSpans: [],
   worker: null,
+  alignWorker: null,
+  pcm16kForAlign: null,
+  forcedWords: [],
   running: false,
   startedAt: 0,
   elapsedTimer: null,
@@ -51,6 +56,7 @@ const els = {
   runtimeSelect: $('psRuntimeSelect'),
   guideToggle: $('psGuideToggle'),
   onsetToggle: $('psOnsetToggle'),
+  forcedAlignToggle: $('psForcedAlignToggle'),
   lyricsInput: $('psLyricsInput'),
   generateBtn: $('psGenerateBtn'),
   stopBtn: $('psStopBtn'),
@@ -278,6 +284,9 @@ function resetApp() {
     cueRows: [],
     currentWordSpans: [],
     worker: null,
+    alignWorker: null,
+    pcm16kForAlign: null,
+    forcedWords: [],
     running: false,
     startedAt: 0,
     transcript: '',
@@ -528,6 +537,11 @@ function createWorker() {
   return new Worker('./src/asr.worker.js', { type: 'module' });
 }
 
+function createAlignWorker() {
+  if (!canUseModuleWorker()) throw new Error('Worker module indisponible dans ce navigateur.');
+  return new Worker('./src/align.worker.js', { type: 'module' });
+}
+
 function buildLyricsPrompt(lines) {
   const unique = [];
   const seen = new Set();
@@ -640,6 +654,8 @@ async function generateAutoCaptions() {
     setStatus('Préparation audio 16 kHz mono...', 8, 'Décodage local puis transfert zero-copy vers le Worker ASR.');
     setPhase('préparation audio');
     const pcm = await decodeAudioToMono16k(state.audioFile);
+    state.pcm16kForAlign = els.forcedAlignToggle?.checked ? pcm.slice() : null;
+    state.forcedWords = [];
     state.vocalOnsets = [];
     if (els.onsetToggle?.checked) {
       setStatus('Analyse locale des attaques vocales...', 18, 'Calcul VAD léger sur le PCM 16 kHz, sans upload.');
@@ -705,7 +721,7 @@ function onWorkerDone(words, text, lines) {
   state.transcript = text;
   els.transcriptOutput.value = text;
   setMetrics();
-  setStatus(`Alignement global avec les paroles propres (${words.length} mots ASR)...`, 90, 'Needleman-Wunsch global, texte exporté inchangé.');
+  setStatus(`Alignement global avec les paroles propres (${words.length} mots ASR)...`, 88, 'Needleman-Wunsch global, texte exporté inchangé.');
   setPhase('alignement global');
   if (!words.length) {
     finishGeneration(false, 'Aucun timestamp mot renvoyé par Whisper. Essaie un autre modèle ou runtime.');
@@ -713,22 +729,91 @@ function onWorkerDone(words, text, lines) {
   }
   try {
     state.cues = buildCuesFromLyricsAndAsr(lines, words, state.duration);
-    let snapped = 0;
-    if (els.onsetToggle?.checked && state.vocalOnsets.length) {
-      state.cues = applyVocalOnsetSnapping(state.cues, state.vocalOnsets, state.duration);
-      snapped = state.cues.snappedCount || 0;
+    if (els.forcedAlignToggle?.checked && state.pcm16kForAlign) {
+      startForcedAlignment(lines);
+      return;
     }
-    setProgress(100);
-    setStatus(`Captions générées: ${state.cues.length} cues, ${words.length} mots ASR.`, 100, `SRT, VTT et JSON prêts. Snapping vocal: ${snapped} débuts ajustés.`);
-    setPhase('terminé');
-    renderCueList();
-    renderTrack();
-    updateCueSelection(-1);
-    requestRenderFrame();
-    finishGeneration(true);
+    finalizeGeneratedCues(words.length, 0, 'ASR');
   } catch (error) {
     finishGeneration(false, error.message || String(error));
   }
+}
+
+function startForcedAlignment(lines) {
+  const segments = buildForcedAlignSegments(lines, state.cues, state.duration);
+  if (!segments.length) {
+    finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
+    return;
+  }
+  let alignPcm = state.pcm16kForAlign;
+  state.pcm16kForAlign = null;
+  const language = els.languageSelect.value === 'auto' ? 'french' : (els.languageSelect.value || 'french');
+  const runtime = els.runtimeSelect.value === 'webgpu' ? 'webgpu' : 'wasm';
+  setStatus(`Alignement forcé CTC (${segments.length} segments)...`, 92, 'Option précision max: wav2vec2 CTC sur les paroles connues.');
+  setPhase('forced alignment');
+  try {
+    state.alignWorker = createAlignWorker();
+    state.alignWorker.onmessage = (event) => {
+      const msg = event.data || {};
+      if (msg.type === 'status') {
+        setStatus(msg.text || 'Alignement forcé...', null, 'Repli transparent sur les timestamps ASR si un segment échoue.');
+      } else if (msg.type === 'progress') {
+        setProgress(90 + Math.max(0, Math.min(9, (Number(msg.pct) || 0) * 0.09)));
+      } else if (msg.type === 'aligned') {
+        onForcedAlignmentDone(msg.words || [], msg.modelId || 'CTC');
+      } else if (msg.type === 'error') {
+        setStatus(`Alignement forcé indisponible: ${msg.message || 'erreur inconnue'}`, 96, 'Repli automatique sur les timestamps Whisper + NW.');
+        finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
+      }
+    };
+    state.alignWorker.onerror = (error) => {
+      setStatus(`Alignement forcé indisponible: ${error.message || 'erreur worker'}`, 96, 'Repli automatique sur les timestamps Whisper + NW.');
+      finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
+    };
+    state.alignWorker.postMessage({
+      type: 'falign',
+      pcm16k: alignPcm,
+      sampleRate: ASR_SAMPLE_RATE,
+      language,
+      segments,
+      device: runtime,
+    }, [alignPcm.buffer]);
+    alignPcm = null;
+  } catch (error) {
+    state.pcm16kForAlign = null;
+    setStatus(`Alignement forcé non lancé: ${error.message || error}`, 96, 'Repli automatique sur les timestamps ASR.');
+    finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
+  }
+}
+
+function onForcedAlignmentDone(forcedWords, modelId) {
+  try {
+    state.forcedWords = forcedWords;
+    const before = state.cues.length;
+    state.cues = applyForcedAlignmentToCues(state.cues, forcedWords, state.duration);
+    const forcedCount = state.cues.forcedCount || forcedWords.length || 0;
+    setStatus(`Alignement forcé appliqué: ${forcedCount} mots recalés.`, 98, `Modèle CTC: ${modelId}. ${before} cues conservées.`);
+    finalizeGeneratedCues(state.asrWords.length, forcedCount, 'forced CTC');
+  } catch (error) {
+    setStatus(`Alignement forcé rejeté: ${error.message || error}`, 96, 'Repli automatique sur les timestamps Whisper + NW.');
+    finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
+  }
+}
+
+function finalizeGeneratedCues(wordCount, forcedCount = 0, source = 'ASR') {
+  let snapped = 0;
+  if (els.onsetToggle?.checked && state.vocalOnsets.length) {
+    state.cues = applyVocalOnsetSnapping(state.cues, state.vocalOnsets, state.duration);
+    snapped = state.cues.snappedCount || 0;
+  }
+  setProgress(100);
+  setStatus(`Captions générées: ${state.cues.length} cues, ${wordCount} mots ASR.`, 100, `Source timing: ${source}. CTC: ${forcedCount} mots. Snapping vocal: ${snapped} débuts ajustés.`);
+  setPhase('terminé');
+  renderCueList();
+  renderTrack();
+  updateCueSelection(-1);
+  requestRenderFrame();
+  finishGeneration(true);
 }
 
 function stopGeneration() {
@@ -736,6 +821,11 @@ function stopGeneration() {
     state.worker.terminate();
     state.worker = null;
   }
+  if (state.alignWorker) {
+    state.alignWorker.terminate();
+    state.alignWorker = null;
+  }
+  state.pcm16kForAlign = null;
   if (state.running) finishGeneration(false, 'Génération interrompue.');
 }
 
@@ -744,6 +834,11 @@ function finishGeneration(success, error = '') {
     state.worker.terminate();
     state.worker = null;
   }
+  if (state.alignWorker) {
+    state.alignWorker.terminate();
+    state.alignWorker = null;
+  }
+  state.pcm16kForAlign = null;
   state.running = false;
   stopElapsedTimer();
   els.generateBtn.disabled = false;
@@ -776,6 +871,8 @@ function cuesToJson(cues) {
     runtime: els.runtimeSelect.value,
     guidedRecognition: Boolean(els.guideToggle?.checked),
     vocalOnsetSnap: Boolean(els.onsetToggle?.checked),
+    forcedAlignment: Boolean(els.forcedAlignToggle?.checked),
+    forcedWords: state.forcedWords.length,
     vocalOnsets: state.vocalOnsets.length,
     sourceAudio: state.audioFile?.name || null,
     duration: state.duration,

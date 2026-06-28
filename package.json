@@ -1,10 +1,10 @@
 {
   "name": "paxlab-subs",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
-    "test": "node tests/align.test.mjs"
+    "test": "node tests/align.test.mjs && node tests/forced-align.test.mjs"
   }
 }

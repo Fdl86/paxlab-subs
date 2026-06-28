@@ -205,3 +205,15 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   font-weight: 800;
 }
 .ps-check input { accent-color: var(--ps-gold); }
+.ps-check-premium {
+  border-color: rgba(217, 179, 108, 0.42);
+  background: linear-gradient(135deg, rgba(217, 179, 108, 0.11), rgba(255,255,255,0.03));
+}
+.ps-check-premium span::after {
+  content: ' lourd';
+  margin-left: 6px;
+  color: var(--ps-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
