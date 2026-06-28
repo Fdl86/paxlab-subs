@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PAXLAB Subs - DEV2.11.9</title>
+    <title>PAXLAB Subs - DEV2.11.10</title>
     <meta name="description" content="PAXLAB Subs - génération locale de sous-titres SRT/VTT depuis audio et paroles propres." />
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
@@ -16,7 +16,7 @@
             <div class="ps-brand-kicker">PAXLAB</div>
             <h1>Subs</h1>
           </div>
-          <span class="ps-version">DEV2.11.9</span>
+          <span class="ps-version">DEV2.11.10</span>
         </div>
         <div class="ps-title">
           <strong>Sous-titres locaux</strong>
@@ -68,7 +68,31 @@
             <button id="psDownloadJsonBtn" class="ps-export" type="button" disabled>JSON</button>
           </div>
 
-          <details class="ps-advanced">
+        </aside>
+
+        <section class="ps-main" aria-label="Preview">
+          <section class="ps-card ps-preview">
+            <div class="ps-card-title ps-card-title-compact">
+              <div><span class="ps-eyebrow">Preview</span><h2>Lecture synchronisée</h2></div>
+              <span id="psPreviewLanguage" class="ps-note">Langue: Français</span>
+            </div>
+            <div class="ps-subtitle-stage">
+              <div class="ps-subtitle-box">
+                <div class="ps-prev-line" id="psPrevLine"></div>
+                <div class="ps-active-line" id="psActiveLine">La ligne synchronisée apparaîtra ici.</div>
+                <div class="ps-next-line" id="psNextLine"></div>
+              </div>
+            </div>
+            <div class="ps-player-inline ps-player-embedded">
+              <button class="ps-play-main ps-play-compact" id="psPlayBtn" type="button" disabled>Play</button>
+              <input id="psSeekBar" type="range" min="0" max="1000" value="0" step="1" disabled />
+              <span class="ps-time" id="psTimeDisplay">00:00 / 00:00</span>
+              <audio id="psAudioEl" preload="metadata"></audio>
+            </div>
+            <textarea id="psTranscriptOutput" class="ps-hidden-buffer" readonly aria-hidden="true" tabindex="-1"></textarea>
+          </section>
+
+          <details class="ps-advanced ps-advanced-horizontal">
             <summary>Réglages avancés</summary>
             <div class="ps-advanced-body">
               <section class="ps-block ps-settings">
@@ -76,43 +100,38 @@
                   <div><span class="ps-step">01</span><h2>Modèle</h2></div>
                   <span class="ps-note">Whisper</span>
                 </div>
-                <label class="ps-field">
-                  <span>Langue</span>
-                  <select id="psLanguageSelect">
-                    <option value="french" selected>Français - PAX VI</option>
-                    <option value="auto">Auto - secours uniquement</option>
-                    <option value="english">Anglais</option>
-                  </select>
-                </label>
-                <label class="ps-field ps-highlight-field">
-                  <span>Modèle de transcription</span>
-                  <select id="psModelSelect">
-                    <option value="onnx-community/whisper-tiny_timestamped">Rapide - Whisper tiny</option>
-                    <option value="onnx-community/whisper-base_timestamped" selected>Standard - Whisper base</option>
-                    <option value="onnx-community/whisper-small_timestamped">Qualité - Whisper small</option>
-                    <option value="onnx-community/whisper-large-v3-turbo_timestamped">Lourd - Large-v3-turbo - le + précis</option>
-                  </select>
-                </label>
-                <label class="ps-field">
-                  <span>Runtime</span>
-                  <select id="psRuntimeSelect">
-                    <option value="wasm" selected>Stable - WASM CPU</option>
-                    <option value="auto">Auto - fallback WASM</option>
-                    <option value="webgpu">Experimental - WebGPU labo</option>
-                  </select>
-                </label>
-                <label class="ps-check">
-                  <input id="psGuideToggle" type="checkbox" checked />
-                  <span>Guider Whisper avec les paroles</span>
-                </label>
-                <label class="ps-check">
-                  <input id="psOnsetToggle" type="checkbox" checked />
-                  <span>Aligner sur l'attaque vocale</span>
-                </label>
-                <label class="ps-check ps-check-premium">
-                  <input id="psForcedAlignToggle" type="checkbox" />
-                  <span>Alignement forcé CTC - précision max</span>
-                </label>
+                <div class="ps-settings-grid">
+                  <label class="ps-field">
+                    <span>Langue</span>
+                    <select id="psLanguageSelect">
+                      <option value="french" selected>Français - PAX VI</option>
+                      <option value="auto">Auto - secours uniquement</option>
+                      <option value="english">Anglais</option>
+                    </select>
+                  </label>
+                  <label class="ps-field ps-highlight-field">
+                    <span>Modèle</span>
+                    <select id="psModelSelect">
+                      <option value="onnx-community/whisper-tiny_timestamped">Rapide - Whisper tiny</option>
+                      <option value="onnx-community/whisper-base_timestamped" selected>Standard - Whisper base</option>
+                      <option value="onnx-community/whisper-small_timestamped">Qualité - Whisper small</option>
+                      <option value="onnx-community/whisper-large-v3-turbo_timestamped">Lourd - Large-v3-turbo</option>
+                    </select>
+                  </label>
+                  <label class="ps-field">
+                    <span>Runtime</span>
+                    <select id="psRuntimeSelect">
+                      <option value="wasm" selected>Stable - WASM CPU</option>
+                      <option value="auto">Auto - fallback WASM</option>
+                      <option value="webgpu">Experimental - WebGPU labo</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="ps-check-row">
+                  <label class="ps-check"><input id="psGuideToggle" type="checkbox" checked /><span>Guidage paroles</span></label>
+                  <label class="ps-check"><input id="psOnsetToggle" type="checkbox" checked /><span>Attaque vocale</span></label>
+                  <label class="ps-check ps-check-premium"><input id="psForcedAlignToggle" type="checkbox" /><span>CTC précision max</span></label>
+                </div>
               </section>
 
               <section class="ps-block ps-engine">
@@ -139,37 +158,6 @@
               </section>
             </div>
           </details>
-        </aside>
-
-        <section class="ps-main" aria-label="Preview">
-          <section class="ps-card ps-preview">
-            <div class="ps-card-title">
-              <div><span class="ps-eyebrow">Preview</span><h2>Lecture synchronisée</h2></div>
-              <span id="psPreviewLanguage" class="ps-note">Langue: Français</span>
-            </div>
-            <div class="ps-subtitle-stage">
-              <div class="ps-subtitle-box">
-                <div class="ps-prev-line" id="psPrevLine"></div>
-                <div class="ps-active-line" id="psActiveLine">La ligne synchronisée apparaîtra ici.</div>
-                <div class="ps-next-line" id="psNextLine"></div>
-              </div>
-            </div>
-          </section>
-
-          <section class="ps-card ps-live-tools">
-            <div class="ps-card-title ps-card-title-compact">
-              <div><span class="ps-eyebrow">Lecture</span><h2>Contrôle rapide</h2></div>
-              <span class="ps-note" id="psAsrCount">0 words</span>
-            </div>
-            <div class="ps-player-inline">
-              <button class="ps-play-main" id="psPlayBtn" type="button" disabled>Play preview</button>
-              <button class="ps-round" id="psPlayerToggle" type="button" aria-label="Lecture">▶</button>
-              <input id="psSeekBar" type="range" min="0" max="1000" value="0" step="1" disabled />
-              <span class="ps-time" id="psTimeDisplay">0:00 / 0:00</span>
-              <audio id="psAudioEl" preload="metadata"></audio>
-            </div>
-            <textarea id="psTranscriptOutput" class="ps-transcript" readonly placeholder="Transcript ASR live / final"></textarea>
-          </section>
         </section>
 
         <aside class="ps-card ps-timeline" aria-label="Timeline">
@@ -186,8 +174,12 @@
           <div class="ps-cue-editor" id="psCueEditor">
             <div class="ps-selected-line"><span>Cue sélectionnée</span><strong id="psSelectedCueLabel">Aucune</strong></div>
             <div class="ps-edit-fields">
-              <label><span>Début</span><input id="psStartInput" type="number" min="0" step="0.01" disabled /></label>
-              <label><span>Fin</span><input id="psEndInput" type="number" min="0" step="0.01" disabled /></label>
+              <label><span>Début</span><input id="psStartInput" type="text" inputmode="decimal" placeholder="00:00.00" disabled /></label>
+              <label><span>Fin</span><input id="psEndInput" type="text" inputmode="decimal" placeholder="00:00.00" disabled /></label>
+            </div>
+            <div class="ps-marker-row">
+              <button id="psSetStartBtn" type="button" disabled>Début = marqueur</button>
+              <button id="psSetEndBtn" type="button" disabled>Fin = marqueur</button>
             </div>
             <div class="ps-adjust-grid">
               <button type="button" data-ps-adjust="start" data-ps-delta="-0.05">Début -0.05</button>
@@ -199,7 +191,7 @@
             </div>
           </div>
 
-          <div class="ps-timeline-meta"><span>Double-clic: aller à la cue</span><span>Badges = aide visuelle, pas retiming</span></div>
+          <div class="ps-timeline-meta"><span>Double-clic: aller à la cue</span><span>Temps: MM:SS.cc</span></div>
           <div class="ps-cue-list" id="psCueList"></div>
         </aside>
       </section>

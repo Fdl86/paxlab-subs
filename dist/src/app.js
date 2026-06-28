@@ -11,7 +11,7 @@ import {
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.11.9';
+const APP_VERSION = 'DEV2.11.10';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -86,12 +86,10 @@ const els = {
   nextLine: $('psNextLine'),
   audioEl: $('psAudioEl'),
   playBtn: $('psPlayBtn'),
-  playerToggle: $('psPlayerToggle'),
   seekBar: $('psSeekBar'),
   timeDisplay: $('psTimeDisplay'),
   cueCount: $('psCueCount'),
   qualityBadge: $('psQualityBadge'),
-  asrCount: $('psAsrCount'),
   cueList: $('psCueList'),
   transcriptOutput: $('psTranscriptOutput'),
   timeTrack: $('psTimeTrack'),
@@ -104,6 +102,8 @@ const els = {
   downloadVttBtn: $('psDownloadVttBtn'),
   downloadJsonBtn: $('psDownloadJsonBtn'),
   cueAdjustButtons: Array.from(document.querySelectorAll('[data-ps-adjust]')),
+  setStartBtn: $('psSetStartBtn'),
+  setEndBtn: $('psSetEndBtn'),
 };
 
 
@@ -179,6 +179,31 @@ function formatClock(seconds) {
   return `${m}:${r}`;
 }
 
+function formatCueTime(seconds) {
+  const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+  const totalCentis = Math.round(safe * 100);
+  const centis = String(totalCentis % 100).padStart(2, '0');
+  const totalSeconds = Math.floor(totalCentis / 100);
+  const sec = String(totalSeconds % 60).padStart(2, '0');
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const min = String(totalMinutes % 60).padStart(2, '0');
+  const hours = Math.floor(totalMinutes / 60);
+  return hours > 0 ? `${hours}:${min}:${sec}.${centis}` : `${min}:${sec}.${centis}`;
+}
+
+function parseCueTime(value) {
+  const raw = String(value ?? '').trim().replace(',', '.');
+  if (!raw) return NaN;
+  if (!raw.includes(':')) return Number(raw);
+  const parts = raw.split(':').map((part) => part.trim());
+  if (parts.some((part) => part === '')) return NaN;
+  const nums = parts.map(Number);
+  if (nums.some((n) => !Number.isFinite(n))) return NaN;
+  if (nums.length === 2) return (nums[0] * 60) + nums[1];
+  if (nums.length === 3) return (nums[0] * 3600) + (nums[1] * 60) + nums[2];
+  return NaN;
+}
+
 function formatSrtTime(seconds) {
   const msTotal = Math.max(0, Math.round((Number.isFinite(seconds) ? seconds : 0) * 1000));
   const ms = String(msTotal % 1000).padStart(3, '0');
@@ -212,7 +237,6 @@ function setPhase(text) {
 function setMetrics() {
   els.liveCueMetric.textContent = String(state.cues.length);
   els.liveWordMetric.textContent = String(state.asrWords.length);
-  els.asrCount.textContent = `${state.asrWords.length} words`;
   els.cueCount.textContent = `${state.cues.length} cues`;
   if (els.qualityBadge) {
     const q = state.qualitySummary || {};
@@ -382,9 +406,9 @@ function resetApp() {
   els.seekBar.value = '0';
   els.seekBar.disabled = true;
   els.playBtn.disabled = true;
-  els.playerToggle.textContent = '▶';
+  els.playBtn.textContent = 'Play';
   els.lyricsInput.value = '';
-  els.transcriptOutput.value = '';
+  if (els.transcriptOutput) els.transcriptOutput.value = '';
   setStatus('Audio + paroles requis.', 0, 'Worker ASR prêt. UI fluide pendant la transcription.');
   setPhase('idle');
   resetCtcStats('OFF');
@@ -394,7 +418,7 @@ function resetApp() {
   renderCueText(null);
   setMetrics();
   updateEngineSummary();
-  els.timeDisplay.textContent = '0:00 / 0:00';
+  els.timeDisplay.textContent = '00:00 / 00:00';
 }
 
 function activeCueAt(time) {
@@ -456,7 +480,7 @@ function updatePreviewFrame() {
   const time = audio.currentTime || 0;
   if (state.duration > 0) {
     els.seekBar.value = String(Math.round((time / state.duration) * 1000));
-    els.timeDisplay.textContent = `${formatClock(time)} / ${formatClock(state.duration)}`;
+    els.timeDisplay.textContent = `${formatCueTime(time)} / ${formatClock(state.duration)}`;
     els.playhead.style.left = `${Math.max(0, Math.min(100, (time / state.duration) * 100))}%`;
   }
 
@@ -464,7 +488,10 @@ function updatePreviewFrame() {
   if (cueIndex !== state.activeCueIndex) {
     if (state.cueRows[state.activeCueIndex]) state.cueRows[state.activeCueIndex].classList.remove('ps-is-active');
     state.activeCueIndex = cueIndex;
-    if (state.cueRows[cueIndex]) state.cueRows[cueIndex].classList.add('ps-is-active');
+    if (state.cueRows[cueIndex]) {
+      state.cueRows[cueIndex].classList.add('ps-is-active');
+      state.cueRows[cueIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
     const cue = state.cues[cueIndex];
     els.prevLine.textContent = cueIndex > 0 ? state.cues[cueIndex - 1].text : '';
     els.nextLine.textContent = cueIndex >= 0 && cueIndex < state.cues.length - 1 ? state.cues[cueIndex + 1].text : '';
@@ -502,7 +529,7 @@ function renderCueList() {
     row.classList.toggle('ps-cue-ctc', source === 'CTC');
     row.classList.toggle('ps-cue-warn', quality.level === 'warn');
     row.classList.toggle('ps-cue-info', quality.level === 'info');
-    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><small>${formatClock(cue.end)}</small></span><span class="ps-cue-main"><span class="ps-cue-text"></span><span class="ps-cue-badges"></span></span><span class="ps-cue-conf"><b>${source}</b><small>${Math.round((cue.confidence || 0) * 100)}%</small></span>`;
+    row.innerHTML = `<span class="ps-cue-time"><b>${formatCueTime(cue.start)}</b><small>${formatCueTime(cue.end)}</small></span><span class="ps-cue-main"><span class="ps-cue-text"></span><span class="ps-cue-badges"></span></span><span class="ps-cue-conf"><b>${source}</b><small>${Math.round((cue.confidence || 0) * 100)}%</small></span>`;
     row.querySelector('.ps-cue-text').textContent = cue.text;
     const badges = row.querySelector('.ps-cue-badges');
     const shownFlags = (quality.flags || []).slice(0, 2);
@@ -549,7 +576,7 @@ function renderTrack() {
     const width = duration ? Math.max(0.4, ((cue.end - cue.start) / duration) * 100) : 0;
     block.style.left = `${Math.max(0, Math.min(100, left))}%`;
     block.style.width = `${Math.max(0.4, Math.min(100 - left, width))}%`;
-    block.title = `${formatClock(cue.start)} - ${cue.text}`;
+    block.title = `${formatCueTime(cue.start)} - ${cue.text}`;
     block.addEventListener('click', () => seekToCue(index, true));
     els.timeTrack.append(block);
   });
@@ -559,13 +586,16 @@ function updateCueSelection(index) {
   state.selectedCueIndex = index;
   state.cueRows.forEach((row, i) => row.classList.toggle('ps-is-selected', i === index));
   const cue = state.cues[index];
+  if (cue && state.cueRows[index]) state.cueRows[index].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   els.selectedCueLabel.textContent = cue ? `#${index + 1}` : 'Aucune';
   els.startInput.disabled = !cue;
   els.endInput.disabled = !cue;
   els.cueAdjustButtons.forEach((button) => { button.disabled = !cue; });
+  if (els.setStartBtn) els.setStartBtn.disabled = !cue;
+  if (els.setEndBtn) els.setEndBtn.disabled = !cue;
   if (cue) {
-    els.startInput.value = cue.start.toFixed(2);
-    els.endInput.value = cue.end.toFixed(2);
+    els.startInput.value = formatCueTime(cue.start);
+    els.endInput.value = formatCueTime(cue.end);
   } else {
     els.startInput.value = '';
     els.endInput.value = '';
@@ -613,6 +643,20 @@ function adjustSelectedCue(kind, delta) {
   if (kind === 'end') end += delta;
   if (kind === 'cue') { start += delta; end += delta; }
   applyCueTimes(state.selectedCueIndex, start, end);
+}
+
+function setSelectedCueEdge(edge) {
+  const index = state.selectedCueIndex;
+  const cue = state.cues[index];
+  if (!cue || !state.audioUrl) return;
+  const marker = Math.max(0, Math.min(state.duration || cue.end, els.audioEl.currentTime || 0));
+  const minDur = Math.max(MIN_CUE_DURATION, String(cue.text || '').length / CPS_MAX);
+  if (edge === 'start') {
+    applyCueTimes(index, marker, cue.end);
+  } else if (edge === 'end') {
+    const end = Math.max(marker, cue.start + minDur);
+    applyCueTimes(index, cue.start, end);
+  }
 }
 
 function seekToCue(index, play = false) {
@@ -768,7 +812,7 @@ async function generateAutoCaptions() {
       state.vocalOnsets = vocalOnsets(pcm, ASR_SAMPLE_RATE);
     }
     els.seekBar.disabled = false;
-    els.timeDisplay.textContent = `0:00 / ${formatClock(state.duration)}`;
+    els.timeDisplay.textContent = `00:00.00 / ${formatClock(state.duration)}`;
 
     const runtime = await resolveRuntime();
     const language = els.languageSelect.value === 'auto' ? undefined : (els.languageSelect.value || 'french');
@@ -787,7 +831,7 @@ async function generateAutoCaptions() {
       } else if (msg.type === 'partial') {
         if (msg.text && !state.transcript.includes(msg.text)) {
           state.transcript = `${state.transcript}${state.transcript ? ' ' : ''}${msg.text}`.trim();
-          els.transcriptOutput.value = state.transcript;
+          if (els.transcriptOutput) els.transcriptOutput.value = state.transcript;
         }
       } else if (msg.type === 'done') {
         onWorkerDone(msg.words || [], msg.text || '', lines);
@@ -824,7 +868,7 @@ function throwWorkerError(message) {
 function onWorkerDone(words, text, lines) {
   state.asrWords = words;
   state.transcript = text;
-  els.transcriptOutput.value = text;
+  if (els.transcriptOutput) els.transcriptOutput.value = text;
   setMetrics();
   setStatus(`Alignement global avec les paroles propres (${words.length} mots ASR)...`, 88, 'Needleman-Wunsch global, texte exporté inchangé.');
   setPhase('alignement global');
@@ -1049,12 +1093,12 @@ function bindEvents() {
 
   els.audioEl.addEventListener('loadedmetadata', () => {
     state.duration = els.audioEl.duration || state.duration;
-    els.timeDisplay.textContent = `0:00 / ${formatClock(state.duration)}`;
+    els.timeDisplay.textContent = `00:00.00 / ${formatClock(state.duration)}`;
     els.seekBar.disabled = false;
     setStatus(`Audio prêt: ${formatClock(state.duration)}.`, 0, 'Colle les paroles propres puis génère.');
   });
-  els.audioEl.addEventListener('play', () => { els.playerToggle.textContent = 'Ⅱ'; requestRenderFrame(); });
-  els.audioEl.addEventListener('pause', () => { els.playerToggle.textContent = '▶'; requestRenderFrame(); });
+  els.audioEl.addEventListener('play', () => { els.playBtn.textContent = 'Stop'; requestRenderFrame(); });
+  els.audioEl.addEventListener('pause', () => { els.playBtn.textContent = 'Play'; requestRenderFrame(); });
   els.audioEl.addEventListener('timeupdate', requestRenderFrame);
   els.audioEl.addEventListener('seeked', requestRenderFrame);
 
@@ -1063,12 +1107,11 @@ function bindEvents() {
     els.audioEl.currentTime = (Number(els.seekBar.value) / 1000) * state.duration;
     requestRenderFrame();
   });
-  els.playerToggle.addEventListener('click', () => {
+  els.playBtn.addEventListener('click', () => {
     if (!state.audioUrl) return;
     if (els.audioEl.paused) els.audioEl.play().catch(() => {});
     else els.audioEl.pause();
   });
-  els.playBtn.addEventListener('click', () => els.playerToggle.click());
   els.generateBtn.addEventListener('click', generateAutoCaptions);
   els.stopBtn.addEventListener('click', stopGeneration);
   els.resetBtn.addEventListener('click', resetApp);
@@ -1089,12 +1132,19 @@ function bindEvents() {
   }));
   els.startInput.addEventListener('change', () => {
     const cue = state.cues[state.selectedCueIndex];
-    if (cue) applyCueTimes(state.selectedCueIndex, Number(els.startInput.value), cue.end);
+    const value = parseCueTime(els.startInput.value);
+    if (cue && Number.isFinite(value)) applyCueTimes(state.selectedCueIndex, value, cue.end);
+    else if (cue) els.startInput.value = formatCueTime(cue.start);
   });
   els.endInput.addEventListener('change', () => {
     const cue = state.cues[state.selectedCueIndex];
-    if (cue) applyCueTimes(state.selectedCueIndex, cue.start, Number(els.endInput.value));
+    const value = parseCueTime(els.endInput.value);
+    if (cue && Number.isFinite(value)) applyCueTimes(state.selectedCueIndex, cue.start, value);
+    else if (cue) els.endInput.value = formatCueTime(cue.end);
   });
+
+  if (els.setStartBtn) els.setStartBtn.addEventListener('click', () => setSelectedCueEdge('start'));
+  if (els.setEndBtn) els.setEndBtn.addEventListener('click', () => setSelectedCueEdge('end'));
 
   els.downloadSrtBtn.addEventListener('click', () => downloadText(`${baseName()}.srt`, cuesToSrt(state.cues), 'text/plain;charset=utf-8'));
   els.downloadVttBtn.addEventListener('click', () => downloadText(`${baseName()}.vtt`, cuesToVtt(state.cues), 'text/vtt;charset=utf-8'));

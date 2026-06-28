@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## DEV2.11.10 - Cue editing UX polish
+
+- Suppression de la box ASR visible pour alléger l'interface.
+- Preview réduite et fusionnée avec les contrôles de lecture.
+- Suppression du bouton "Play preview" au profit d'un bouton Play compact intégré sous la preview.
+- Réglages avancés déplacés sous la preview et réorganisés horizontalement.
+- Affichage des temps de cues en format MM:SS.cc pour correspondre au marqueur de timeline.
+- Ajout des boutons "Début = marqueur" et "Fin = marqueur" pour caler une cue sur la position courante.
+- Auto-scroll de la liste pour garder la cue active visible pendant la lecture.
+- Aucun changement moteur, modèle, détection ou export.
+
 ## DEV2.11.9 - Safe detection flags
 
 - Ajout d'une analyse qualité non destructive par cue.
@@ -27,8 +38,6 @@
 - Ajout de garde-fous : les lignes courtes ne servent pas de correction forte, et une cue ne peut plus être étirée absurdement par le CTC.
 - CTC auto q8 conservé, OFF par défaut, fallback ASR inchangé.
 - Tests alignement enrichis avec le cas d'intro Rocroi.
-
-# CHANGELOG
 
 ## DEV2.11.5 - CTC automatique et léger (fin du modèle 1,26 Go)
 

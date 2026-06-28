@@ -1,8 +1,8 @@
-# PAXLAB Subs - DEV2.11.9
+# PAXLAB Subs - DEV2.11.10
 
 Module local de génération et prévisualisation de sous-titres PAXLAB.
 
-DEV2.11.9 ajoute une couche de détection prudente après génération : badges de qualité par cue, résumé des lignes à vérifier, signalement des lignes courtes, hooks répétés, grands blancs, durées anormales, confiance basse et ruptures intro/silence. Cette passe ne retime pas les sous-titres et ne modifie pas les exports SRT/VTT. La base UI DEV2.11.8 et le moteur DEV2.11.7 restent conservés.
+DEV2.11.10 est une passe UI/UX centrée sur la correction rapide : preview plus compacte, lecture intégrée, suppression de la box ASR visible, réglages avancés horizontaux, temps de cues en MM:SS.cc, boutons "Début = marqueur" / "Fin = marqueur" et auto-scroll de la cue active. Le moteur DEV2.11.9 reste inchangé.
 
 ## Cloudflare Pages
 
