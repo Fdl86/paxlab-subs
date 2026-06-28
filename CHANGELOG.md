@@ -1,13 +1,15 @@
 # CHANGELOG
 
-## DEV2.11.6 - fenêtres CTC larges et VAD réel
+## DEV2.11.7 - Conservative gap repair baseline
 
-- Correction du mapping multi-lignes CTC : le worker renvoie maintenant `lineIndex` / `wordIndex` depuis chaque mot source, pas depuis le segment global.
-- Remplacement des fenêtres CTC trop serrées par des super-segments larges ancrés sur les lignes fiables, avec limite 40 s et recouvrement.
-- Ajout de fenêtres de secours larges pour rattraper les intros, blancs et ruptures de structure mal placés par le coarse ASR/NW.
-- Snapping vocal repris avec détection d'onsets adaptative sur le PCM 16 kHz, et application uniquement sur les débuts de cues peu fiables.
-- Gating de confiance CTC : les mots/lignes à score trop faible ne remplacent plus les timestamps ASR.
-- Tests enrichis pour couvrir le vocab CTC, les fenêtres larges d'intro et la substitution multi-lignes.
+- Base fonctionnelle reprise depuis `paxlab-subs-dev2-11-5-auto-ctc.zip`.
+- Version affichée corrigée en DEV2.11.7.
+- Ajout d'une réparation conservatrice des gros trous intro / reprise vocale, sans fenêtres CTC larges permissives.
+- Ajout de garde-fous : les lignes courtes ne servent pas de correction forte, et une cue ne peut plus être étirée absurdement par le CTC.
+- CTC auto q8 conservé, OFF par défaut, fallback ASR inchangé.
+- Tests alignement enrichis avec le cas d'intro Rocroi.
+
+# CHANGELOG
 
 ## DEV2.11.5 - CTC automatique et léger (fin du modèle 1,26 Go)
 

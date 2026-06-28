@@ -1,13 +1,14 @@
-# PAXLAB Subs - DEV2.11.6
+# PAXLAB Subs - DEV2.11.7
 
-Module local de génération de sous-titres SRT/VTT/JSON depuis audio + paroles propres.
+Module local de génération et prévisualisation de sous-titres PAXLAB.
 
-DEV2.11.6 garde la base CTC automatique q8 fonctionnelle de DEV2.11.5 et améliore le calage : fenêtres CTC larges et multi-lignes, étiquetage par mot `lineIndex/wordIndex`, snapping vocal adaptatif réellement actif, et gating de confiance pour éviter les substitutions CTC douteuses.
+DEV2.11.7 repart de la base fonctionnelle DEV2.11.5 Claude et ajoute un correctif conservateur : réparation prudente des gros trous d'intro, garde-fous sur lignes courtes, plafonds de durée pour éviter les cues absurdes, et version visible corrigée. Le modèle CTC auto q8 reste disponible via toggle, sans upload ni hébergement personnel.
 
 ## Cloudflare Pages
 
-Build command: `npm run build`
-Output directory: `dist`
+Build command : `npm run build`
+Output directory : `dist`
+Root directory : vide
 
 ## Tests
 

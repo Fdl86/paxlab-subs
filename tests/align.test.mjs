@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   alignWordsNW,
   buildCuesFromLyricsAndAsr,
+  conservativeGapRepair,
   flattenLyrics,
   matchScore,
   normalizeWord,
@@ -95,5 +96,21 @@ function alignedTexts(lines, words) {
   assert.equal(cues.length, 2);
   assert.equal(cues[0].text, 'Debout soldats');
 }
+
+
+{
+  const cues = [
+    { id: 1, text: 'Le jour se lève…', start: 2.9, end: 7.0, words: [] },
+    { id: 2, text: 'Chargez !', start: 9.3, end: 10.2, words: [] },
+    { id: 3, text: "À l’aube grise, les chevaux mordent l’air", start: 10.3, end: 12.7, words: [] },
+    { id: 4, text: 'Louis de Bourbon fixe la ligne adverse', start: 33.4, end: 38.5, words: [] },
+  ];
+  const repaired = conservativeGapRepair(cues, 120);
+  assert.ok(repaired.gapRepairCount >= 1, 'conservative gap repair should detect the intro-gap pattern');
+  assert.ok(repaired[2].start > 30, 'early lyric line should move close to the later vocal block');
+  assert.ok(repaired[2].end < repaired[3].start, 'repaired line must stay before following cue');
+  assert.ok(repaired[2].end - repaired[2].start < 7.3, 'repaired line must not become absurdly long');
+}
+
 
 console.log('align.test.mjs OK');

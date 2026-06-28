@@ -1,6 +1,76 @@
 export const MIN_CUE_DURATION = 0.85;
 export const CPS_MAX = 17;
 
+export function maxCueDurationForText(text) {
+  const line = String(text || '');
+  const words = tokenizeDisplayLine(line).length;
+  const chars = line.length;
+  if (words <= 2) return 4.8;
+  return Math.min(7.2, Math.max(1.8, chars / 13 + 0.75, words * 0.55 + 0.85));
+}
+
+function isShortCueText(text) {
+  return tokenizeDisplayLine(text).length <= 3 || String(text || '').length <= 18;
+}
+
+function cloneCue(cue) {
+  return { ...cue, words: Array.isArray(cue.words) ? cue.words.map((word) => ({ ...word })) : [] };
+}
+
+export function conservativeGapRepair(cues, duration) {
+  if (!Array.isArray(cues) || cues.length < 3) return cues;
+  const next = cues.map(cloneCue);
+  let repaired = 0;
+  for (let i = 1; i < next.length - 1; i += 1) {
+    const prev = next[i - 1];
+    const cue = next[i];
+    const following = next[i + 1];
+    if (!prev || !cue || !following) continue;
+    const cueDur = cue.end - cue.start;
+    const followingDur = following.end - following.start;
+    const gapBefore = cue.start - prev.end;
+    const gapAfter = following.start - cue.end;
+    const cueWords = tokenizeDisplayLine(cue.text).length;
+    const followingWords = tokenizeDisplayLine(following.text).length;
+
+    // Cas typique detecte sur Rocroi : ligne longue placee juste apres un cri court,
+    // puis trou enorme avant la ligne suivante deja proche de la vraie reprise vocale.
+    // On ne touche qu'a ce pattern tres restrictif pour eviter les derives globales.
+    const isolatedEarlyLine =
+      gapBefore >= -0.05 && gapBefore < 1.75 &&
+      gapAfter > 8 &&
+      cueWords >= 5 &&
+      followingWords >= 5 &&
+      isShortCueText(prev.text) &&
+      followingDur > 3.2 &&
+      cueDur < 6.0;
+
+    if (!isolatedEarlyLine) continue;
+    const cueMax = maxCueDurationForText(cue.text);
+    const cueTargetDur = Math.min(cueMax, Math.max(cueDur, Math.max(1.55, String(cue.text || '').length / 18)));
+    const followingMin = Math.max(MIN_CUE_DURATION, String(following.text || '').length / CPS_MAX);
+    const gap = 0.15;
+    const blockStart = Math.max(prev.end + 0.12, following.start + 0.12);
+    const proposedCueEnd = blockStart + cueTargetDur;
+    const proposedFollowingStart = proposedCueEnd + gap;
+
+    if (proposedFollowingStart + followingMin <= following.end + 0.15) {
+      cue.start = blockStart;
+      cue.end = proposedCueEnd;
+      cue.repairSource = 'conservative-gap';
+      cue.words = retimeCueWords(cue.words, cue.start, cue.end, cue.text);
+      following.start = Math.max(following.start, proposedFollowingStart);
+      following.repairSource = following.repairSource || 'conservative-gap-neighbor';
+      following.words = retimeCueWords(following.words, following.start, following.end, following.text);
+      repaired += 1;
+    }
+  }
+  const ordered = enforceCueOrder(next, duration);
+  ordered.gapRepairCount = repaired;
+  return ordered;
+}
+
+
 const STRUCTURE_MARKERS = /\((?:intro|outro|verse|couplet|chorus|refrain|bridge|pont|hook|pre[-\s]?chorus|pré[-\s]?refrain|pre[-\s]?refrain|break|solo|instrumental)\)/gi;
 const STRUCTURE_LINE = /^(?:intro|outro|verse|couplet|chorus|refrain|bridge|pont|hook|pre[-\s]?chorus|pré[-\s]?refrain|pre[-\s]?refrain|break|solo|instrumental)(?:\s*\d+)?$/i;
 const ELISION_PREFIXES = new Set(['l', 'd', 'j', 'm', 't', 's', 'n', 'c', 'qu', 'lorsqu', 'jusqu', 'puisqu', 'quoiqu']);
@@ -396,171 +466,28 @@ export function buildCuesFromAlignedLines(lines, alignedWords, duration) {
 }
 
 
-const CTC_TIGHT_PADDING = 0.45;
-const CTC_MAX_WINDOW_SECONDS = 40;
-const CTC_SPLIT_OVERLAP_SECONDS = 2;
-const CTC_ANCHOR_CONFIDENCE = 0.82;
-const CTC_MIN_WORD_SCORE = 0.12;
-const CTC_MIN_LINE_SCORE = 0.18;
-
-function displayWordsForLine(text, lineIndex) {
-  return tokenizeDisplayLine(text).map((wordText, wordIndex) => ({
-    text: wordText,
-    norm: normalizeWord(wordText),
-    phon: phoneticKey(normalizeWord(wordText)),
-    lineIndex,
-    wordIndex,
-  })).filter((word) => word.norm);
-}
-
-function lineEntriesForForcedAlignment(lines, cues, duration) {
-  return lines.map((line, lineIndex) => {
-    const cue = cues[lineIndex] || {};
-    const text = String(line || cue?.text || '').trim();
-    const words = displayWordsForLine(text, lineIndex);
-    const fallbackDur = Math.max(MIN_CUE_DURATION, text.length / CPS_MAX);
-    const start = Number.isFinite(cue.start) ? cue.start : 0;
-    const end = Number.isFinite(cue.end) ? cue.end : start + fallbackDur;
-    const confidence = Number.isFinite(cue.confidence) ? cue.confidence : 0;
+export function buildForcedAlignSegments(lines, cues, duration, padding = 0.45) {
+  if (!Array.isArray(lines) || !Array.isArray(cues)) return [];
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Math.max(...cues.map((cue) => cue?.end || 0), 0);
+  return cues.map((cue, lineIndex) => {
+    const text = String(lines[lineIndex] || cue?.text || '').trim();
+    const displayWords = tokenizeDisplayLine(text).map((wordText, wordIndex) => ({
+      text: wordText,
+      norm: normalizeWord(wordText),
+      phon: phoneticKey(normalizeWord(wordText)),
+      lineIndex,
+      wordIndex,
+    })).filter((word) => word.norm);
+    const cueStart = Number.isFinite(cue?.start) ? cue.start : 0;
+    const cueEnd = Number.isFinite(cue?.end) ? cue.end : cueStart + Math.max(MIN_CUE_DURATION, text.length / CPS_MAX);
     return {
       lineIndex,
       text,
-      words,
-      start: Math.max(0, start),
-      end: Math.max(start + 0.05, end),
-      confidence,
-      wordCount: words.length,
-      timingSource: cue.timingSource || 'asr',
-      cue,
-      duration: Math.max(0.05, end - start),
+      words: displayWords,
+      start: Math.max(0, cueStart - padding),
+      end: Math.min(safeDuration || cueEnd + padding, cueEnd + padding),
     };
-  }).filter((entry) => entry.text && entry.words.length);
-}
-
-function isReliableCtcAnchor(entry, entries) {
-  if (!entry || entry.wordCount < 3) return false;
-  if (!Number.isFinite(entry.start) || !Number.isFinite(entry.end) || entry.end <= entry.start) return false;
-  if ((entry.confidence || 0) < CTC_ANCHOR_CONFIDENCE) return false;
-
-  // Les intros avec cris/paroles courtes créent souvent de fausses ancres fortes.
-  // On évite donc de verrouiller trop tôt une ligne longue placée juste après une ou deux lignes très courtes.
-  const previous = entries.slice(Math.max(0, entry.lineIndex - 2), entry.lineIndex);
-  const precededByShortIntro = previous.some((item) => item.wordCount <= 2);
-  if (entry.lineIndex < 5 && entry.start < 30 && precededByShortIntro) return false;
-
-  return true;
-}
-
-function segmentFromEntries(entries, start, end, safeDuration, label = 'segment') {
-  const words = entries.flatMap((entry) => entry.words);
-  if (!words.length) return null;
-  const cleanStart = Math.max(0, Number(start) || 0);
-  const cleanEnd = Math.min(safeDuration || Math.max(cleanStart + 0.25, Number(end) || cleanStart + 0.25), Math.max(cleanStart + 0.25, Number(end) || cleanStart + 0.25));
-  if (cleanEnd <= cleanStart + 0.25) return null;
-  const first = entries[0];
-  const last = entries[entries.length - 1];
-  return {
-    lineIndex: first.lineIndex,
-    lineStart: first.lineIndex,
-    lineEnd: last.lineIndex,
-    text: entries.length === 1 ? first.text : `${first.text} … ${last.text}`,
-    words,
-    start: cleanStart,
-    end: cleanEnd,
-    mode: label,
-  };
-}
-
-function splitLongForcedSegment(segment) {
-  if (!segment || segment.end - segment.start <= CTC_MAX_WINDOW_SECONDS) return segment ? [segment] : [];
-  const out = [];
-  let cursor = segment.start;
-  let guard = 0;
-  while (cursor < segment.end - 0.25 && guard < 64) {
-    const end = Math.min(segment.end, cursor + CTC_MAX_WINDOW_SECONDS);
-    out.push({ ...segment, start: cursor, end, mode: `${segment.mode || 'segment'}-split` });
-    if (end >= segment.end) break;
-    cursor = Math.max(cursor + 1, end - CTC_SPLIT_OVERLAP_SECONDS);
-    guard += 1;
-  }
-  return out;
-}
-
-function dedupeForcedSegments(segments) {
-  const seen = new Set();
-  const out = [];
-  for (const segment of segments) {
-    if (!segment || !segment.words?.length) continue;
-    const key = `${segment.lineStart}:${segment.lineEnd}:${segment.start.toFixed(2)}:${segment.end.toFixed(2)}:${segment.mode}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(segment);
-  }
-  return out.sort((a, b) => a.start - b.start || a.lineStart - b.lineStart || a.end - b.end);
-}
-
-function fallbackForcedWindows(entries, safeDuration) {
-  if (!entries.length) return [];
-  const window = 25;
-  const overlap = 2;
-  const searchSlack = 18;
-  const segments = [];
-  for (let start = 0; start < safeDuration; start += window - overlap) {
-    const end = Math.min(safeDuration, start + window);
-    const group = entries.filter((entry) => entry.end >= start - searchSlack && entry.start <= end + searchSlack);
-    if (group.length) segments.push(segmentFromEntries(group, start, end, safeDuration, 'fixed-window'));
-    if (end >= safeDuration) break;
-  }
-  return segments.flatMap(splitLongForcedSegment);
-}
-
-export function buildForcedAlignSegments(lines, cues, duration, padding = CTC_TIGHT_PADDING) {
-  if (!Array.isArray(lines) || !Array.isArray(cues)) return [];
-  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Math.max(...cues.map((cue) => cue?.end || 0), 0);
-  const entries = lineEntriesForForcedAlignment(lines, cues, safeDuration);
-  if (!entries.length) return [];
-
-  const anchors = entries.filter((entry) => isReliableCtcAnchor(entry, entries));
-  const segments = [];
-
-  if (anchors.length >= 1) {
-    // Ancres fiables : on les garde en fenêtre serrée pour préserver les lignes déjà bonnes.
-    for (const anchor of anchors) {
-      segments.push(segmentFromEntries(
-        [anchor],
-        Math.max(0, anchor.start - padding),
-        Math.min(safeDuration, anchor.end + padding),
-        safeDuration,
-        'anchor-tight',
-      ));
-    }
-
-    // Tout ce qui est entre deux ancres est aligné dans une grande fenêtre qui couvre les trous instrumentaux.
-    const bounds = [
-      { lineIndex: -1, start: 0, end: 0, virtual: true },
-      ...anchors,
-      { lineIndex: entries[entries.length - 1].lineIndex + 1, start: safeDuration, end: safeDuration, virtual: true },
-    ];
-
-    for (let i = 0; i < bounds.length - 1; i += 1) {
-      const left = bounds[i];
-      const right = bounds[i + 1];
-      const group = entries.filter((entry) => entry.lineIndex > left.lineIndex && entry.lineIndex < right.lineIndex);
-      if (!group.length) continue;
-      const start = left.virtual ? 0 : Math.max(0, left.start);
-      const end = right.virtual ? safeDuration : Math.min(safeDuration, right.end);
-      segments.push(segmentFromEntries(group, start, end, safeDuration, 'anchor-span'));
-    }
-  } else {
-    segments.push(...fallbackForcedWindows(entries, safeDuration));
-  }
-
-  // Filet de sécurité : fenêtres fixes larges avec tolérance autour du coarse.
-  // Elles permettent au CTC de rattraper une fausse fenêtre initiale sans dépendre totalement des ancres.
-  segments.push(...fallbackForcedWindows(entries, safeDuration).map((segment) => ({ ...segment, mode: 'rescue-window' })));
-
-  return dedupeForcedSegments(segments.flatMap(splitLongForcedSegment))
-    .filter((segment) => segment.text && segment.words.length && segment.end > segment.start + 0.25);
+  }).filter((segment) => segment.text && segment.words.length && segment.end > segment.start + 0.25);
 }
 
 export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
@@ -570,14 +497,12 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
     cues.forcedCueCount = 0;
     cues.changedCueCount = 0;
     cues.avgShiftMs = 0;
-    cues.rejectedCueCount = 0;
     return cues;
   }
   const forcedMap = new Map();
   for (const word of forcedWords) {
     if (!Number.isInteger(word?.lineIndex) || !Number.isInteger(word?.wordIndex)) continue;
     if (!Number.isFinite(word.start) || !Number.isFinite(word.end) || word.end <= word.start) continue;
-    if (Number.isFinite(word.score) && word.score < CTC_MIN_WORD_SCORE) continue;
     const key = `${word.lineIndex}:${word.wordIndex}`;
     const current = forcedMap.get(key);
     if (!current || (word.score || 0) > (current.score || 0)) {
@@ -589,25 +514,22 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
     cues.forcedCueCount = 0;
     cues.changedCueCount = 0;
     cues.avgShiftMs = 0;
-    cues.rejectedCueCount = 0;
     return cues;
   }
 
   let substituted = 0;
   let forcedCueCount = 0;
   let changedCueCount = 0;
-  let rejectedCueCount = 0;
   let shiftSumMs = 0;
   let shiftMeasures = 0;
   const next = cues.map((cue, lineIndex) => {
     const beforeStart = cue.start;
     const beforeEnd = cue.end;
     const displayTokens = tokenizeDisplayLine(cue.text);
-    const forcedForCue = [];
     const baseWords = spreadCueWords(cue.text, cue.start, cue.end).map((word, wordIndex) => {
       const forced = forcedMap.get(`${lineIndex}:${wordIndex}`);
       if (!forced) return { ...word, lineIndex, wordIndex, forced: false, timingSource: 'asr' };
-      forcedForCue.push(forced);
+      substituted += 1;
       return {
         ...word,
         lineIndex,
@@ -623,14 +545,6 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
     const forcedTimed = baseWords.filter((word) => word.forced && Number.isFinite(word.start) && Number.isFinite(word.end));
     if (!forcedTimed.length) return { ...cue, timingSource: cue.timingSource || 'asr', words: cue.words?.length ? cue.words : baseWords };
 
-    const avgScore = forcedForCue.reduce((sum, word) => sum + (Number.isFinite(word.score) ? word.score : 0.5), 0) / Math.max(1, forcedForCue.length);
-    const forcedRatio = forcedTimed.length / Math.max(1, displayTokens.length);
-    if (avgScore < CTC_MIN_LINE_SCORE || forcedRatio < Math.min(0.5, displayTokens.length <= 2 ? 1 : 0.35)) {
-      rejectedCueCount += 1;
-      return { ...cue, timingSource: cue.timingSource || 'asr', words: cue.words?.length ? cue.words : baseWords, ctcRejected: true };
-    }
-
-    substituted += forcedTimed.length;
     forcedCueCount += 1;
     const timedWords = interpolateMissingWords(baseWords.map((word) => ({ ...word })), duration);
     const allTimed = timedWords.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
@@ -638,6 +552,24 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
     const last = Math.max(...allTimed.map((word) => word.end));
     const nextStart = Math.max(0, first - 0.04);
     const nextEnd = last + 0.1;
+    const forcedRatio = forcedTimed.length / Math.max(1, displayTokens.length);
+    const nextDuration = nextEnd - nextStart;
+    const maxDuration = maxCueDurationForText(cue.text);
+    const largeShift = Math.max(Math.abs(nextStart - beforeStart), Math.abs(nextEnd - beforeEnd));
+    const veryShortAmbiguous = isShortCueText(cue.text) && forcedRatio < 1;
+
+    // Le CTC est un raffineur, pas une autorisation a etirer une ligne sur un trou instrumental.
+    // Si le resultat est trop long, trop deplace, ou base sur une ligne courte ambigue, on garde l'ASR.
+    if (nextDuration > maxDuration || (largeShift > 3.0 && forcedRatio < 0.9) || veryShortAmbiguous) {
+      return {
+        ...cue,
+        timingSource: cue.timingSource || 'asr',
+        ctcRejected: true,
+        ctcRejectReason: nextDuration > maxDuration ? 'duration-cap' : (veryShortAmbiguous ? 'short-ambiguous' : 'large-shift'),
+        words: cue.words?.length ? cue.words : baseWords,
+      };
+    }
+
     const shiftMs = (Math.abs(nextStart - beforeStart) + Math.abs(nextEnd - beforeEnd)) * 500;
     shiftSumMs += shiftMs;
     shiftMeasures += 1;
@@ -646,11 +578,10 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
       ...cue,
       start: nextStart,
       end: nextEnd,
-      confidence: Math.max(cue.confidence || 0, Math.min(1, 0.55 + forcedRatio * 0.35 + avgScore * 0.1)),
+      confidence: Math.max(cue.confidence || 0, Math.min(1, 0.55 + forcedRatio * 0.45)),
       timingSource: 'forced-ctc',
       forcedWords: forcedTimed.length,
       timingShiftMs: shiftMs,
-      ctcScore: avgScore,
       words: timedWords,
     };
   });
@@ -659,7 +590,6 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
   ordered.forcedCueCount = forcedCueCount;
   ordered.changedCueCount = changedCueCount;
   ordered.avgShiftMs = shiftMeasures ? shiftSumMs / shiftMeasures : 0;
-  ordered.rejectedCueCount = rejectedCueCount;
   return ordered;
 }
 
@@ -668,5 +598,5 @@ export function buildCuesFromLyricsAndAsr(lines, asrWords, duration) {
   const aligned = alignWordsNW(lyricWords, asrWords, duration);
   const cues = buildCuesFromAlignedLines(lines, aligned, duration);
   if (!cues.some((cue) => cue.confidence > 0)) return proportionalCueFallback(lines, duration);
-  return cues;
+  return conservativeGapRepair(cues, duration);
 }

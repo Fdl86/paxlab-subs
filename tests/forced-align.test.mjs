@@ -112,44 +112,10 @@ function asr(tokens, start = 0) {
   const lines = ['Debout dans notre mémoire'];
   const cues = buildCuesFromLyricsAndAsr(lines, asr(['Debout', 'dans', 'notre', 'mémoire'], 1), 20);
   const segments = buildForcedAlignSegments(lines, cues, 20);
-  assert.ok(segments.length >= 1);
+  assert.equal(segments.length, 1);
   assert.equal(segments[0].lineIndex, 0);
-  assert.ok(segments.some((segment) => segment.words.length === 4));
-  assert.ok(segments.some((segment) => segment.start < cues[0].start));
-}
-
-{
-  const lines = [
-    'Le jour se lève',
-    'Chargez',
-    "À l'aube grise les chevaux mordent l'air",
-    'Et le canon répond',
-    'Un ordre bref une main dans la lumière',
-  ];
-  const cues = [
-    { start: 2, end: 6, confidence: 0.65, text: lines[0] },
-    { start: 9, end: 10, confidence: 0.72, text: lines[1] },
-    { start: 10.2, end: 13.5, confidence: 0.9, text: lines[2] },
-    { start: 35.4, end: 38.0, confidence: 0.55, text: lines[3] },
-    { start: 40.1, end: 43.2, confidence: 0.93, text: lines[4] },
-  ];
-  const segments = buildForcedAlignSegments(lines, cues, 70);
-  const broad = segments.find((segment) => segment.words.some((word) => word.lineIndex === 2) && segment.start <= 0.01 && segment.end >= 40);
-  assert.ok(broad, 'intro misplaced line must be covered by a wide CTC window');
-}
-
-{
-  const cues = [
-    { text: 'Alpha beta', start: 1, end: 2, confidence: 0.9 },
-    { text: 'Gamma delta', start: 3, end: 4, confidence: 0.9 },
-  ];
-  const forced = [
-    { lineIndex: 0, wordIndex: 0, start: 1.1, end: 1.2, score: 0.9 },
-    { lineIndex: 1, wordIndex: 0, start: 3.1, end: 3.2, score: 0.9 },
-  ];
-  const aligned = applyForcedAlignmentToCues(cues, forced, 10);
-  assert.equal(aligned[0].timingSource, 'forced-ctc');
-  assert.equal(aligned[1].timingSource, 'forced-ctc');
+  assert.equal(segments[0].words.length, 4);
+  assert.ok(segments[0].start < cues[0].start);
 }
 
 console.log('forced-align.test.mjs OK');

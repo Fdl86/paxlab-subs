@@ -205,16 +205,13 @@ async function alignSegment(ctx, segment, pcm, sampleRate, index, total) {
   const local = aggregateTokenPathToWords(path, tokenToWord, frameSeconds, start)
     .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
   diagnostic({ status: 'CTC segment aligned', segmentIndex: index, requestedWords: words.length, alignedWords: local.length, frames, tokenCount: tokenIds.length });
-  return local.map((item) => {
-    const sourceWord = words[item.wordIndex];
-    return {
-      lineIndex: sourceWord?.lineIndex ?? segment.lineIndex,
-      wordIndex: sourceWord?.wordIndex ?? item.wordIndex,
-      start: item.start,
-      end: Math.max(item.end, item.start + 0.04),
-      score: clamp01(item.score),
-    };
-  });
+  return local.map((item) => ({
+    lineIndex: segment.lineIndex,
+    wordIndex: item.wordIndex,
+    start: item.start,
+    end: Math.max(item.end, item.start + 0.04),
+    score: clamp01(item.score),
+  }));
 }
 
 async function runForcedAlign(message) {
