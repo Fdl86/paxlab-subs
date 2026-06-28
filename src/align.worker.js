@@ -1,85 +1,127 @@
 import { aggregateTokenPathToWords, ctcTrellisAlign, logSoftmaxRows } from './forced-align.js';
 import { buildTokenIds } from './ctc-tokens.js';
 
-const TRANSFORMERS_URLS = [
-  'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2',
-  'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3',
-  'https://unpkg.com/@huggingface/transformers@3.5.2',
-  'https://unpkg.com/@huggingface/transformers@3',
+const ORT_URLS = [
+  { url: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.mjs', wasmPath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/' },
+  { url: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.mjs', wasmPath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/' },
+  { url: 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.mjs', wasmPath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/' },
 ];
-const DEFAULT_MODEL_FR = 'Poulpidot/wav2vec2-large-xlsr-53-french-onnx';
-const FALLBACK_MODEL = 'Xenova/wav2vec2-base-960h';
-let transformersModule = null;
-let modelCache = null;
-let tokenizerCache = null;
-let processorCache = null;
-let cacheKey = '';
+
+const DEFAULT_MODEL_FR = {
+  id: 'Poulpidot/wav2vec2-large-xlsr-53-french-onnx',
+  baseUrl: 'https://huggingface.co/Poulpidot/wav2vec2-large-xlsr-53-french-onnx/resolve/main',
+  modelPath: 'model.onnx',
+  vocabPath: 'vocab.json',
+  preprocessorPath: 'preprocessor_config.json',
+  specialTokensPath: 'special_tokens_map.json',
+  tokenizerConfigPath: 'tokenizer_config.json',
+  mode: 'direct-onnx',
+};
+
+let ortModule = null;
+let ctcCache = null;
+let ctcCacheKey = '';
 
 function post(type, payload = {}) { self.postMessage({ type, ...payload }); }
 function diagnostic(payload = {}) { post('diagnostic', payload); }
 function countSegmentWords(segments = []) { return segments.reduce((sum, segment) => sum + ((segment.words || []).filter((word) => word?.norm).length), 0); }
+function clamp01(value) { return Math.max(0, Math.min(1, value)); }
 
-async function importTransformers() {
-  if (transformersModule) return transformersModule;
+async function importOrt() {
+  if (ortModule) return ortModule;
   let last = null;
-  for (const url of TRANSFORMERS_URLS) {
+  for (const candidate of ORT_URLS) {
     try {
-      post('status', { text: `Chargement module CTC (${new URL(url).host})...` });
-      transformersModule = await import(url);
-      return transformersModule;
+      post('status', { text: `Chargement ONNX Runtime (${new URL(candidate.url).host})...` });
+      const module = await import(candidate.url);
+      const ort = module.default || module;
+      if (!ort?.InferenceSession || !ort?.Tensor) throw new Error('Exports ONNX Runtime incomplets.');
+      try {
+        if (ort.env?.wasm) {
+          ort.env.wasm.wasmPaths = candidate.wasmPath;
+          ort.env.wasm.numThreads = Math.max(1, Math.min(4, self.navigator?.hardwareConcurrency || 1));
+        }
+      } catch (_) {}
+      ortModule = ort;
+      diagnostic({ status: 'ORT loaded', url: candidate.url, wasmPath: candidate.wasmPath });
+      return ort;
     } catch (error) {
       last = error;
+      diagnostic({ status: 'ORT load failed', url: candidate.url, fallbackReason: error?.message || String(error) });
     }
   }
-  throw new Error(`Impossible de charger Transformers.js pour alignement forcé. ${last?.message || ''}`.trim());
+  throw new Error(`Impossible de charger ONNX Runtime Web. ${last?.message || ''}`.trim());
 }
 
-function configureEnv(env) {
-  env.allowLocalModels = false;
-  env.useBrowserCache = true;
-  try {
-    const threads = Math.max(1, Math.min(4, self.navigator?.hardwareConcurrency || 1));
-    if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.numThreads = threads;
-  } catch (_) {}
+function hfUrl(model, path) {
+  return `${model.baseUrl}/${path}`;
+}
+
+async function fetchJson(url, label) {
+  const response = await fetch(url, { cache: 'force-cache' });
+  if (!response.ok) throw new Error(`${label} inaccessible (${response.status})`);
+  return response.json();
+}
+
+function buildDirectTokenizer(vocab, specialTokens = {}, tokenizerConfig = {}) {
+  if (!vocab || typeof vocab !== 'object' || Array.isArray(vocab)) throw new Error('vocab.json CTC invalide.');
+  const padToken = specialTokens.pad_token || tokenizerConfig.pad_token || '<pad>';
+  const wordDelimiterToken = tokenizerConfig.word_delimiter_token || specialTokens.word_delimiter_token || '|';
+  const padId = vocab[padToken] ?? vocab['<pad>'] ?? vocab['[PAD]'] ?? vocab['<PAD>'] ?? 0;
+  return {
+    vocab,
+    pad_token_id: padId,
+    word_delimiter_token: wordDelimiterToken,
+    config: { pad_token_id: padId },
+    model: { vocab },
+  };
+}
+
+async function loadDirectOnnxCtc(modelSpec, device = 'wasm') {
+  const ort = await importOrt();
+  const key = `${modelSpec.id}::${device || 'wasm'}::direct-onnx`;
+  if (ctcCache && ctcCacheKey === key) return ctcCache;
+
+  post('status', { text: `Chargement CTC direct ONNX ${modelSpec.id}...` });
+  diagnostic({ status: 'CTC direct loading', modelId: modelSpec.id });
+
+  const [vocab, preprocessor, specialTokens, tokenizerConfig] = await Promise.all([
+    fetchJson(hfUrl(modelSpec, modelSpec.vocabPath), 'vocab.json'),
+    fetchJson(hfUrl(modelSpec, modelSpec.preprocessorPath), 'preprocessor_config.json'),
+    fetchJson(hfUrl(modelSpec, modelSpec.specialTokensPath), 'special_tokens_map.json').catch(() => ({})),
+    fetchJson(hfUrl(modelSpec, modelSpec.tokenizerConfigPath), 'tokenizer_config.json').catch(() => ({})),
+  ]);
+
+  const tokenizer = buildDirectTokenizer(vocab, specialTokens, tokenizerConfig);
+  const modelUrl = hfUrl(modelSpec, modelSpec.modelPath);
+  const providers = device === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+  const options = {
+    executionProviders: providers,
+    graphOptimizationLevel: 'all',
+  };
+  post('status', { text: `Téléchargement modèle ONNX CTC lourd (${modelSpec.id})...` });
+  diagnostic({ status: 'CTC session loading', modelId: modelSpec.id, modelUrl, vocabSize: Object.keys(vocab).length, providers: providers.join(',') });
+  const session = await ort.InferenceSession.create(modelUrl, options);
+
+  ctcCache = { engine: 'direct-onnx', ort, session, tokenizer, preprocessor, modelId: modelSpec.id };
+  ctcCacheKey = key;
+  diagnostic({
+    status: 'CTC session loaded',
+    modelId: modelSpec.id,
+    vocabSize: Object.keys(vocab).length,
+    inputNames: session.inputNames?.join(', ') || '',
+    outputNames: session.outputNames?.join(', ') || '',
+    normalize: Boolean(preprocessor?.do_normalize),
+    samplingRate: preprocessor?.sampling_rate || 16000,
+  });
+  return ctcCache;
 }
 
 async function loadCtc(modelId, device) {
-  const t = await importTransformers();
-  configureEnv(t.env);
-  const candidates = [modelId || DEFAULT_MODEL_FR, FALLBACK_MODEL].filter(Boolean);
-  let lastError = null;
-  for (const candidate of candidates) {
-    const key = `${candidate}::${device || 'wasm'}`;
-    if (modelCache && cacheKey === key) return { model: modelCache, tokenizer: tokenizerCache, processor: processorCache, modelId: candidate };
-    try {
-      post('status', { text: `Chargement modèle CTC ${candidate}...` });
-      diagnostic({ status: 'CTC model loading', modelId: candidate });
-      const AutoModelForCTC = t.AutoModelForCTC || t.Wav2Vec2ForCTC || t.AutoModel;
-      if (!AutoModelForCTC || !t.AutoTokenizer) throw new Error('Classes CTC indisponibles dans Transformers.js.');
-      const options = {
-        device: device || 'wasm',
-        progress_callback: (event) => {
-          if (event?.status === 'progress' && Number.isFinite(event.progress)) post('progress', { pct: Math.min(35, event.progress * 0.35) });
-        },
-      };
-      const [model, tokenizer, processor] = await Promise.all([
-        AutoModelForCTC.from_pretrained(candidate, options),
-        t.AutoTokenizer.from_pretrained(candidate),
-        t.AutoProcessor ? t.AutoProcessor.from_pretrained(candidate).catch(() => null) : Promise.resolve(null),
-      ]);
-      modelCache = model;
-      tokenizerCache = tokenizer;
-      processorCache = processor;
-      cacheKey = key;
-      diagnostic({ status: 'CTC model loaded', modelId: candidate, processor: Boolean(processor), tokenizerModel: tokenizer?.model?.constructor?.name || 'unknown' });
-      return { model, tokenizer, processor, modelId: candidate };
-    } catch (error) {
-      lastError = error;
-      diagnostic({ status: 'CTC model failed', modelId: candidate, fallbackReason: error?.message || String(error) });
-      post('status', { text: `Échec CTC ${candidate}. ${candidate !== FALLBACK_MODEL ? 'Tentative repli...' : ''}` });
-    }
-  }
-  throw lastError || new Error('Impossible de charger un modèle CTC.');
+  // DEV2.11.4: Poulpidot does not ship tokenizer.json, so it must be loaded through direct ORT + vocab.json.
+  const selected = DEFAULT_MODEL_FR;
+  if (modelId && modelId !== selected.id) diagnostic({ status: 'CTC model override ignored', requestedModelId: modelId, modelId: selected.id });
+  return loadDirectOnnxCtc(selected, device === 'webgpu' ? 'webgpu' : 'wasm');
 }
 
 function slicePcm(pcm, sampleRate, start, end) {
@@ -88,8 +130,8 @@ function slicePcm(pcm, sampleRate, start, end) {
   return pcm.slice(a, b);
 }
 
-
-function normalizeInputPcm(inputPcm) {
+function normalizeInputPcm(inputPcm, preprocessor = {}) {
+  if (preprocessor?.do_normalize === false) return inputPcm;
   let sum = 0;
   for (let i = 0; i < inputPcm.length; i += 1) sum += inputPcm[i] || 0;
   const mean = sum / Math.max(1, inputPcm.length);
@@ -104,40 +146,54 @@ function normalizeInputPcm(inputPcm) {
   return out;
 }
 
-async function runModel(model, processor, inputPcm, sampleRate) {
-  if (processor) {
-    diagnostic({ status: 'CTC processor run', samples: inputPcm.length, sampleRate });
-    const inputs = await processor(inputPcm, { sampling_rate: sampleRate });
-    return model(inputs);
+function buildFeeds(ctx, inputPcm) {
+  const normalized = normalizeInputPcm(inputPcm, ctx.preprocessor);
+  const dims = [1, normalized.length];
+  const feeds = {};
+  const inputNames = ctx.session.inputNames || ['input_values'];
+  for (const name of inputNames) {
+    if (/attention_mask/i.test(name)) {
+      const mask = new BigInt64Array(normalized.length);
+      mask.fill(1n);
+      feeds[name] = new ctx.ort.Tensor('int64', mask, dims);
+    } else {
+      feeds[name] = new ctx.ort.Tensor('float32', normalized, dims);
+    }
   }
+  diagnostic({ status: 'CTC direct feeds', inputNames: inputNames.join(', '), samples: normalized.length, normalized: ctx.preprocessor?.do_normalize !== false });
+  return feeds;
+}
 
-  const Tensor = transformersModule?.Tensor;
-  if (!Tensor) throw new Error('Processor CTC indisponible et Tensor Transformers.js indisponible.');
-  diagnostic({ status: 'CTC processor missing - manual normalized tensor', samples: inputPcm.length, sampleRate });
-  const normalized = normalizeInputPcm(inputPcm);
-  const input_values = new Tensor('float32', normalized, [1, normalized.length]);
-  return model({ input_values });
+async function runModel(ctx, inputPcm, sampleRate) {
+  if (ctx.engine !== 'direct-onnx') throw new Error('Moteur CTC inconnu.');
+  const expectedRate = Number(ctx.preprocessor?.sampling_rate || 16000);
+  if (expectedRate && Math.abs(expectedRate - sampleRate) > 1) diagnostic({ status: 'CTC sample-rate warning', expectedRate, sampleRate });
+  const feeds = buildFeeds(ctx, inputPcm);
+  return ctx.session.run(feeds);
 }
 
 function logitsFromOutput(output) {
-  const tensor = output?.logits;
+  if (!output || typeof output !== 'object') throw new Error('Sortie CTC vide.');
+  const preferredKey = Object.keys(output).find((key) => key.toLowerCase().includes('logit')) || Object.keys(output)[0];
+  const tensor = output[preferredKey];
   if (!tensor?.data || !tensor?.dims) throw new Error('Logits CTC absents (modèle sans tête CTC ?)');
+  if (tensor.dims.length < 2) throw new Error(`Logits CTC invalides: dims ${tensor.dims.join('x')}`);
+  diagnostic({ status: 'CTC logits received', outputName: preferredKey, dims: tensor.dims.join('x') });
   return { data: tensor.data, dims: tensor.dims };
 }
-
 
 async function alignSegment(ctx, segment, pcm, sampleRate, index, total) {
   const start = Math.max(0, Number(segment.start) || 0);
   const end = Math.max(start + 0.25, Number(segment.end) || start + 0.25);
   const words = (segment.words || []).filter((word) => word?.norm);
   if (!words.length) return [];
-  const { tokenIds, tokenToWord, blank } = buildTokenIds(words, ctx.tokenizer);
-  diagnostic({ status: 'CTC segment tokens', segmentIndex: index, requestedWords: words.length, tokenCount: tokenIds.length });
+  const { tokenIds, tokenToWord, blank, skipped, vocabSize } = buildTokenIds(words, ctx.tokenizer);
+  diagnostic({ status: 'CTC segment tokens', segmentIndex: index, requestedWords: words.length, tokenCount: tokenIds.length, vocabSize, skipped: [...new Set(skipped)].slice(0, 12).join('') });
   if (!tokenIds.length) return [];
   const chunk = slicePcm(pcm, sampleRate, start, end);
   if (chunk.length < sampleRate * 0.18) return [];
   post('status', { text: `Alignement forcé ${index + 1}/${total}: ${segment.text.slice(0, 42)}` });
-  const output = await runModel(ctx.model, ctx.processor, chunk, sampleRate);
+  const output = await runModel(ctx, chunk, sampleRate);
   const { data, dims } = logitsFromOutput(output);
   const frames = dims[dims.length - 2];
   if (!frames || frames < tokenIds.length) {
@@ -148,14 +204,15 @@ async function alignSegment(ctx, segment, pcm, sampleRate, index, total) {
   const emissions = logSoftmaxRows(data, dims, wanted);
   const path = ctcTrellisAlign(emissions, tokenIds, blank);
   const frameSeconds = (end - start) / Math.max(1, frames);
-  const local = aggregateTokenPathToWords(path, tokenToWord, frameSeconds, start);
+  const local = aggregateTokenPathToWords(path, tokenToWord, frameSeconds, start)
+    .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
   diagnostic({ status: 'CTC segment aligned', segmentIndex: index, requestedWords: words.length, alignedWords: local.length, frames, tokenCount: tokenIds.length });
   return local.map((item) => ({
     lineIndex: segment.lineIndex,
     wordIndex: item.wordIndex,
     start: item.start,
     end: Math.max(item.end, item.start + 0.04),
-    score: item.score,
+    score: clamp01(item.score),
   }));
 }
 
@@ -165,10 +222,10 @@ async function runForcedAlign(message) {
   if (!Array.isArray(segments) || !segments.length) throw new Error('Segments manquants pour alignement forcé.');
   const requestedWords = countSegmentWords(segments);
   diagnostic({ status: 'CTC requested', segments: segments.length, requestedWords, alignedWords: 0, segmentsOk: 0, segmentsFailed: 0 });
-  const selectedModel = modelId || (String(language).toLowerCase().startsWith('fr') ? DEFAULT_MODEL_FR : FALLBACK_MODEL);
+  const selectedModel = modelId || (String(language).toLowerCase().startsWith('fr') ? DEFAULT_MODEL_FR.id : DEFAULT_MODEL_FR.id);
   const ctx = await loadCtc(selectedModel, device === 'webgpu' ? 'webgpu' : 'wasm');
   post('status', { text: `CTC prêt: ${ctx.modelId}. Trellis par fenêtre.` });
-  diagnostic({ status: 'CTC ready', modelId: ctx.modelId, segments: segments.length, requestedWords });
+  diagnostic({ status: 'CTC ready', modelId: ctx.modelId, engine: ctx.engine, segments: segments.length, requestedWords });
   const aligned = [];
   const total = segments.length;
   let segmentsOk = 0;
@@ -189,7 +246,7 @@ async function runForcedAlign(message) {
     }
   }
   post('progress', { pct: 98 });
-  const diagnostics = { status: aligned.length ? 'CTC words returned' : 'CTC zero words', modelId: ctx.modelId, segments: total, segmentsOk, segmentsFailed, requestedWords, alignedWords: aligned.length };
+  const diagnostics = { status: aligned.length ? 'CTC words returned' : 'CTC zero words', modelId: ctx.modelId, engine: ctx.engine, segments: total, segmentsOk, segmentsFailed, requestedWords, alignedWords: aligned.length };
   diagnostic(diagnostics);
   post('aligned', { words: aligned, modelId: ctx.modelId, diagnostics });
 }

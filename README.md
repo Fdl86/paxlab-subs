@@ -1,23 +1,14 @@
-# PAXLAB Subs - DEV2.11.3
+# PAXLAB Subs - DEV2.11.4
 
-Module local de sous-titres automatiques PAXLAB.
+Module local de génération de sous-titres SRT/VTT/JSON depuis audio + paroles propres.
 
-## DEV2.11.3
-
-Correctif ciblé du modèle CTC français : remplacement du repo invalide `Xenova/wav2vec2-large-xlsr-53-french` par `Poulpidot/wav2vec2-large-xlsr-53-french-onnx`.
-
-Les correctifs DEV2.11.2 restent présents : vocab/tokenizer Transformers.js 3.5.2, processor sécurisé, rejet des sorties sans vrais logits CTC. Le chemin nominal reste inchangé lorsque le toggle CTC est désactivé.
+DEV2.11.4 corrige le chargement CTC français en utilisant Poulpidot/wav2vec2-large-xlsr-53-french-onnx via ONNX Runtime direct : `model.onnx` + `vocab.json`, sans dépendre de `tokenizer.json`.
 
 ## Cloudflare Pages
 
-Build command:
+Build command: `npm run build`
+Output directory: `dist`
 
-```text
-npm run build
-```
+## Tests
 
-Output directory:
-
-```text
-dist
-```
+`npm test`
