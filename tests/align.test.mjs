@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   alignWordsNW,
+  analyzeCueQuality,
+  attachCueQuality,
   buildCuesFromLyricsAndAsr,
   conservativeGapRepair,
   flattenLyrics,
@@ -112,5 +114,24 @@ function alignedTexts(lines, words) {
   assert.ok(repaired[2].end - repaired[2].start < 7.3, 'repaired line must not become absurdly long');
 }
 
+
+
+{
+  const cues = [
+    { id: 1, text: 'Le jour se lève…', start: 2.9, end: 7.0, confidence: 0.82, words: [] },
+    { id: 2, text: 'Chargez !', start: 9.3, end: 10.2, confidence: 0.78, words: [] },
+    { id: 3, text: "À l’aube grise, les chevaux mordent l’air", start: 10.3, end: 12.7, confidence: 0.42, words: [] },
+    { id: 4, text: 'Louis de Bourbon fixe la ligne adverse', start: 33.4, end: 38.5, confidence: 0.86, words: [] },
+    { id: 5, text: 'Choc de Rocroi !', start: 60, end: 62.2, confidence: 0.71, words: [] },
+    { id: 6, text: 'Choc de Rocroi !', start: 74, end: 76.1, confidence: 0.69, words: [] },
+  ];
+  const analysis = analyzeCueQuality(cues, 120);
+  assert.equal(analysis.items.length, cues.length);
+  assert.ok(analysis.items[2].flags.some((flag) => flag.code === 'intro-gap'), 'intro gap should be flagged without retiming');
+  assert.ok(analysis.items[4].flags.some((flag) => flag.code === 'repeated-line' || flag.code === 'repeated-short'), 'repeated short hook should be flagged');
+  const annotated = attachCueQuality(cues, 120);
+  assert.ok(annotated[2].quality.level === 'warn');
+  assert.equal(annotated[2].start, 10.3, 'quality flags must not alter timing');
+}
 
 console.log('align.test.mjs OK');

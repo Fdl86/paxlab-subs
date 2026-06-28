@@ -2,6 +2,7 @@ import {
   CPS_MAX,
   MIN_CUE_DURATION,
   applyForcedAlignmentToCues,
+  attachCueQuality,
   buildCuesFromLyricsAndAsr,
   buildForcedAlignSegments,
   enforceCueOrder,
@@ -10,7 +11,7 @@ import {
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.11.8';
+const APP_VERSION = 'DEV2.11.9';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -42,6 +43,7 @@ const state = {
   transcript: '',
   asrWords: [],
   vocalOnsets: [],
+  qualitySummary: { total: 0, ok: 0, info: 0, warn: 0, flags: 0 },
   renderRequested: false,
 };
 
@@ -88,6 +90,7 @@ const els = {
   seekBar: $('psSeekBar'),
   timeDisplay: $('psTimeDisplay'),
   cueCount: $('psCueCount'),
+  qualityBadge: $('psQualityBadge'),
   asrCount: $('psAsrCount'),
   cueList: $('psCueList'),
   transcriptOutput: $('psTranscriptOutput'),
@@ -211,8 +214,32 @@ function setMetrics() {
   els.liveWordMetric.textContent = String(state.asrWords.length);
   els.asrCount.textContent = `${state.asrWords.length} words`;
   els.cueCount.textContent = `${state.cues.length} cues`;
+  if (els.qualityBadge) {
+    const q = state.qualitySummary || {};
+    els.qualityBadge.textContent = qualitySummaryText();
+    els.qualityBadge.classList.toggle('ps-quality-warn', (q.warn || 0) > 0);
+    els.qualityBadge.classList.toggle('ps-quality-info', !(q.warn || 0) && (q.info || 0) > 0);
+  }
   els.runtimeBadge.textContent = state.running ? 'RUNNING' : 'READY';
   els.runtimeBadge.classList.toggle('ps-pill-running', state.running);
+}
+
+
+function refreshCueQuality() {
+  if (!state.cues.length) {
+    state.qualitySummary = { total: 0, ok: 0, info: 0, warn: 0, flags: 0 };
+    return;
+  }
+  state.cues = attachCueQuality(state.cues, state.duration);
+  state.qualitySummary = state.cues.qualitySummary || { total: state.cues.length, ok: state.cues.length, info: 0, warn: 0, flags: 0 };
+}
+
+function qualitySummaryText() {
+  const q = state.qualitySummary || { total: 0, ok: 0, info: 0, warn: 0 };
+  if (!q.total) return '0 à vérifier';
+  const verify = (q.warn || 0) + (q.info || 0);
+  if (!verify) return 'Aucun signal';
+  return `${q.warn || 0} à vérifier / ${q.info || 0} info`;
 }
 
 function updateEngineSummary() {
@@ -345,6 +372,7 @@ function resetApp() {
     transcript: '',
     asrWords: [],
     vocalOnsets: [],
+    qualitySummary: { total: 0, ok: 0, info: 0, warn: 0, flags: 0 },
   });
   els.audioInput.value = '';
   els.audioEl.removeAttribute('src');
@@ -470,9 +498,27 @@ function renderCueList() {
     row.className = 'ps-cue-row';
     row.dataset.index = String(index);
     const source = cue.timingSource === 'forced-ctc' ? 'CTC' : 'ASR';
+    const quality = cue.quality || { level: 'ok', flags: [] };
     row.classList.toggle('ps-cue-ctc', source === 'CTC');
-    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><small>${formatClock(cue.end)}</small></span><span class="ps-cue-text"></span><span class="ps-cue-conf"><b>${source}</b><small>${Math.round((cue.confidence || 0) * 100)}%</small></span>`;
+    row.classList.toggle('ps-cue-warn', quality.level === 'warn');
+    row.classList.toggle('ps-cue-info', quality.level === 'info');
+    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><small>${formatClock(cue.end)}</small></span><span class="ps-cue-main"><span class="ps-cue-text"></span><span class="ps-cue-badges"></span></span><span class="ps-cue-conf"><b>${source}</b><small>${Math.round((cue.confidence || 0) * 100)}%</small></span>`;
     row.querySelector('.ps-cue-text').textContent = cue.text;
+    const badges = row.querySelector('.ps-cue-badges');
+    const shownFlags = (quality.flags || []).slice(0, 2);
+    shownFlags.forEach((flag) => {
+      const badge = document.createElement('span');
+      badge.className = `ps-cue-badge ps-cue-badge-${flag.level || 'info'}`;
+      badge.textContent = flag.label;
+      badge.title = flag.detail || flag.label;
+      badges.append(badge);
+    });
+    if (!shownFlags.length) {
+      const badge = document.createElement('span');
+      badge.className = 'ps-cue-badge ps-cue-badge-ok';
+      badge.textContent = 'OK';
+      badges.append(badge);
+    }
     row.addEventListener('click', () => updateCueSelection(index));
     row.addEventListener('dblclick', () => seekToCue(index, true));
     els.cueList.append(row);
@@ -497,6 +543,8 @@ function renderTrack() {
     const block = document.createElement('button');
     block.type = 'button';
     block.className = 'ps-track-cue';
+    block.classList.toggle('ps-track-warn', cue.quality?.level === 'warn');
+    block.classList.toggle('ps-track-info', cue.quality?.level === 'info');
     const left = duration ? (cue.start / duration) * 100 : 0;
     const width = duration ? Math.max(0.4, ((cue.end - cue.start) / duration) * 100) : 0;
     block.style.left = `${Math.max(0, Math.min(100, left))}%`;
@@ -547,6 +595,7 @@ function applyCueTimes(index, start, end) {
   cue.end = safeEnd;
   state.cues.sort((a, b) => a.start - b.start);
   state.cues.forEach((item, i) => { item.id = i + 1; });
+  refreshCueQuality();
   const newIndex = state.cues.indexOf(cue);
   renderCueList();
   renderTrack();
@@ -890,8 +939,10 @@ function finalizeGeneratedCues(wordCount, forcedCount = 0, source = 'ASR') {
     state.cues = applyVocalOnsetSnapping(state.cues, state.vocalOnsets, state.duration);
     snapped = state.cues.snappedCount || 0;
   }
+  refreshCueQuality();
+  const q = state.qualitySummary || {};
   setProgress(100);
-  setStatus(`Captions générées: ${state.cues.length} cues, ${wordCount} mots ASR.`, 100, `Source timing: ${source}. CTC: ${forcedCount} mots. Snapping vocal: ${snapped} débuts ajustés.`);
+  setStatus(`Captions générées: ${state.cues.length} cues, ${wordCount} mots ASR.`, 100, `Source timing: ${source}. CTC: ${forcedCount} mots. Snapping vocal: ${snapped} débuts ajustés. À vérifier: ${q.warn || 0}.`);
   setPhase('terminé');
   renderCueList();
   renderTrack();
@@ -958,6 +1009,7 @@ function cuesToJson(cues) {
     forcedAlignment: Boolean(els.forcedAlignToggle?.checked),
     forcedWords: state.forcedWords.length,
     ctcStats: state.ctcStats,
+    qualitySummary: state.qualitySummary,
     vocalOnsets: state.vocalOnsets.length,
     sourceAudio: state.audioFile?.name || null,
     duration: state.duration,

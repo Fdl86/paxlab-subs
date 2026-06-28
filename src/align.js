@@ -71,6 +71,89 @@ export function conservativeGapRepair(cues, duration) {
 }
 
 
+
+export function analyzeCueQuality(cues, duration = 0) {
+  const list = Array.isArray(cues) ? cues : [];
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Math.max(...list.map((cue) => cue?.end || 0), 0);
+  const counts = new Map();
+  for (const cue of list) {
+    const key = String(cue?.text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+
+  const items = list.map((cue, index) => {
+    const text = String(cue?.text || '');
+    const words = tokenizeDisplayLine(text).length;
+    const durationCue = Math.max(0, (Number(cue?.end) || 0) - (Number(cue?.start) || 0));
+    const gapBefore = index > 0 ? (cue.start || 0) - (list[index - 1]?.end || 0) : cue.start || 0;
+    const gapAfter = index < list.length - 1 ? (list[index + 1]?.start || 0) - (cue.end || 0) : Math.max(0, safeDuration - (cue.end || 0));
+    const chars = text.replace(/\s+/g, '').length;
+    const cps = durationCue > 0 ? chars / durationCue : 0;
+    const maxDuration = maxCueDurationForText(text);
+    const key = text.toLowerCase().replace(/\s+/g, ' ').trim();
+    const repeated = counts.get(key) > 1;
+    const confidence = Number.isFinite(cue?.confidence) ? cue.confidence : null;
+    const prev = list[index - 1];
+    const next = list[index + 1];
+    const flags = [];
+
+    const add = (code, label, level, detail = '') => {
+      if (flags.some((flag) => flag.code === code)) return;
+      flags.push({ code, label, level, detail });
+    };
+
+    if (isShortCueText(text) && repeated) add('repeated-short', 'Hook répété', 'warn', 'Ligne courte répétée, placement potentiellement ambigu.');
+    else if (words <= 2) add('short-line', 'Ligne courte', 'info', 'Peu de mots disponibles pour ancrer le timing.');
+    else if (words <= 3) add('short-line', 'Ligne courte', 'info', 'Peu de mots disponibles pour ancrer le timing.');
+
+    if (durationCue > maxDuration + 0.45) add('long-duration', 'Durée longue', 'warn', `Durée ${durationCue.toFixed(1)}s pour une cible max ${maxDuration.toFixed(1)}s.`);
+    if (cps > CPS_MAX * 1.15) add('high-cps', 'Lecture rapide', 'warn', `${cps.toFixed(1)} caractères/seconde.`);
+    if (confidence !== null && confidence > 0 && confidence < 0.48) add('low-confidence', 'Confiance basse', 'warn', `Confiance ${Math.round(confidence * 100)}%.`);
+    if (cue?.ctcRejected) add('ctc-rejected', 'CTC rejeté', 'info', cue.ctcRejectReason || 'Timing CTC non retenu.');
+
+    const prevShort = prev ? isShortCueText(prev.text) : false;
+    const nextWords = next ? tokenizeDisplayLine(next.text).length : 0;
+    const introLike = index <= 6 && prevShort && words >= 5 && gapBefore < 1.85 && gapAfter > 7.5 && nextWords >= 4;
+    if (introLike) add('intro-gap', 'Intro/silence', 'warn', 'Possible reprise vocale après cri court ou blanc instrumental.');
+    else if (gapAfter > 9 && index < list.length - 1) add('long-gap-after', 'Grand blanc', 'info', `Silence ou instrumental probable: ${gapAfter.toFixed(1)}s après la cue.`);
+
+    const level = flags.some((flag) => flag.level === 'warn') ? 'warn' : (flags.length ? 'info' : 'ok');
+    return {
+      level,
+      flags,
+      words,
+      duration: durationCue,
+      maxDuration,
+      cps,
+      gapBefore,
+      gapAfter,
+    };
+  });
+
+  const summary = items.reduce((acc, item) => {
+    acc.total += 1;
+    if (item.level === 'warn') acc.warn += 1;
+    else if (item.level === 'info') acc.info += 1;
+    else acc.ok += 1;
+    acc.flags += item.flags.length;
+    return acc;
+  }, { total: 0, ok: 0, info: 0, warn: 0, flags: 0 });
+
+  return { items, summary };
+}
+
+export function attachCueQuality(cues, duration = 0) {
+  if (!Array.isArray(cues)) return cues;
+  const analysis = analyzeCueQuality(cues, duration);
+  cues.forEach((cue, index) => {
+    cue.quality = analysis.items[index] || { level: 'ok', flags: [] };
+  });
+  cues.qualitySummary = analysis.summary;
+  return cues;
+}
+
+
 const STRUCTURE_MARKERS = /\((?:intro|outro|verse|couplet|chorus|refrain|bridge|pont|hook|pre[-\s]?chorus|pré[-\s]?refrain|pre[-\s]?refrain|break|solo|instrumental)\)/gi;
 const STRUCTURE_LINE = /^(?:intro|outro|verse|couplet|chorus|refrain|bridge|pont|hook|pre[-\s]?chorus|pré[-\s]?refrain|pre[-\s]?refrain|break|solo|instrumental)(?:\s*\d+)?$/i;
 const ELISION_PREFIXES = new Set(['l', 'd', 'j', 'm', 't', 's', 'n', 'c', 'qu', 'lorsqu', 'jusqu', 'puisqu', 'quoiqu']);

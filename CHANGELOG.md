@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## DEV2.11.9 - Safe detection flags
+
+- Ajout d'une analyse qualité non destructive par cue.
+- Badges visibles dans la timeline : OK, ligne courte, hook répété, intro/silence, grand blanc, durée longue, lecture rapide, confiance basse, CTC rejeté.
+- Résumé compact des cues à vérifier dans l'en-tête Timeline.
+- Les flags n'altèrent pas les timings et ne changent pas les exports SRT/VTT.
+- Ajout d'un test garantissant que les flags détectent le pattern intro/silence sans retiming.
+- Version visible, README et package mis à jour en DEV2.11.9.
+
 ## DEV2.11.8 - Polish PAXLAB UI layout
 
 - Passe UI/UX uniquement, sans changement moteur.
