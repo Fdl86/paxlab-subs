@@ -1,6 +1,6 @@
 {
   "name": "paxlab-subs",
-  "version": "0.2.6-dev2-model-selector",
+  "version": "0.2.7-dev2-ui-rebuild",
   "private": true,
   "type": "module",
   "scripts": {

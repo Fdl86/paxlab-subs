@@ -7,4 +7,4 @@ rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 cpSync(join(root, 'index.html'), join(dist, 'index.html'));
 cpSync(join(root, 'src'), join(dist, 'src'), { recursive: true });
-console.log('PAXLAB Subs DEV2.6 build OK - static dist generated.');
+console.log('PAXLAB Subs DEV2.7 build OK - static dist generated.');
