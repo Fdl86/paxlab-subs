@@ -1,22 +1,37 @@
-# PAXLAB Subs - DEV2.7
+# PAXLAB Subs - DEV2.9
 
-Module autonome de génération locale de sous-titres depuis audio + paroles propres.
+Module autonome destiné à être intégré plus tard dans PAXLAB.
 
-## DEV2.7
+## Objectif
 
-- Reprise complète de l'interface PAXLAB sombre / champagne.
-- Sélecteur de modèle Whisper visible dans les réglages.
-- Layout desktop stabilisé pour 1920x1080.
-- Panneau moteur live restructuré, sans chevauchement.
-- Timeline, édition de cues, preview et exports conservés.
-- CSS et IDs préfixés `ps-` pour intégration future dans PAXLAB.
-- Aucun backend, aucun upload, pas de package-lock, build Cloudflare statique.
+Créer localement des sous-titres SRT/VTT/JSON depuis :
+
+- un fichier audio MP3/WAV ;
+- des paroles propres collées telles quelles ;
+- une transcription Whisper exécutée côté navigateur.
+
+Aucun upload, aucun backend.
+
+## DEV2.9
+
+Cette version refond le moteur :
+
+- ASR dans un Web Worker module ;
+- un seul appel Whisper avec chunking natif 30 s et stride 5 s ;
+- décodage/resampling audio via OfflineAudioContext en mono 16 kHz ;
+- alignement global Needleman-Wunsch entre paroles propres et mots ASR ;
+- contraintes CPS pour éviter les cues trop rapides ;
+- rendu preview anti-jank : la ligne active n'est plus reconstruite à chaque frame ;
+- piste temporelle légère avec blocs de cues et tête de lecture ;
+- édition directe start/end + boutons +/-0.05 s ;
+- `_headers` Cloudflare avec COOP/COEP credentialless ;
+- tests Node pour l'aligneur.
 
 ## Cloudflare Pages
 
 Build command:
 
-```bash
+```text
 npm run build
 ```
 
@@ -26,4 +41,14 @@ Output directory:
 dist
 ```
 
-Root directory: laisser vide si le contenu du dossier `paxlab-subs` est copié à la racine du repo.
+Root directory : laisser vide si les fichiers sont à la racine du repo.
+
+## Tests
+
+```bash
+npm test
+```
+
+## Notes
+
+Runtime par défaut : WASM CPU stable. WebGPU reste expérimental.

@@ -3,28 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PAXLAB Subs - DEV2.7</title>
-    <meta name="description" content="PAXLAB Subs - génération automatique locale de sous-titres SRT/VTT depuis audio et paroles propres." />
+    <title>PAXLAB Subs - DEV2.9</title>
+    <meta name="description" content="PAXLAB Subs - génération locale de sous-titres SRT/VTT depuis audio et paroles propres." />
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
     <main id="paxlabSubsApp" class="ps-app" data-module="paxlab-subs">
       <header class="ps-header">
-        <div class="ps-brand-block">
-          <div class="ps-mark" aria-hidden="true">PS</div>
-          <div class="ps-brand-copy">
-            <div class="ps-kicker">PAXLAB</div>
+        <div class="ps-brand">
+          <div class="ps-logo" aria-hidden="true">PS</div>
+          <div>
+            <div class="ps-brand-kicker">PAXLAB</div>
             <h1>Subs</h1>
           </div>
-          <span class="ps-version">DEV2.7 UI</span>
+          <span class="ps-version">DEV2.9 ENGINE</span>
         </div>
-
-        <div class="ps-header-center">
+        <div class="ps-title">
           <strong>Sous-titres automatiques</strong>
           <span>Audio + paroles propres - français verrouillé - traitement local - export SRT / VTT / JSON</span>
         </div>
-
-        <div class="ps-header-actions">
+        <div class="ps-header-pills">
           <span class="ps-pill ps-pill-ok" id="psRuntimeBadge">READY</span>
           <span class="ps-pill">fr-FR</span>
           <span class="ps-pill">No upload</span>
@@ -33,139 +31,77 @@
       </header>
 
       <section class="ps-workspace">
-        <aside class="ps-left ps-stack" aria-label="Configuration de génération">
-          <section class="ps-card ps-upload-card">
-            <div class="ps-card-head">
-              <div>
-                <span class="ps-eyebrow">01</span>
-                <h2>Audio source</h2>
-              </div>
-              <span class="ps-card-note">MP3 / WAV</span>
+        <aside class="ps-card ps-controls" aria-label="Contrôles">
+          <section class="ps-block">
+            <div class="ps-block-head">
+              <div><span class="ps-step">01</span><h2>Audio</h2></div>
+              <span class="ps-note">MP3 / WAV</span>
             </div>
-
-            <label class="ps-drop-zone" id="psDropZone">
+            <label class="ps-drop" id="psDropZone">
               <input id="psAudioInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/*" />
               <span class="ps-drop-icon">＋</span>
-              <strong id="psAudioDropTitle">Glisse un MP3/WAV ici ou clique</strong>
-              <small id="psAudioMeta">Traitement local - aucun upload</small>
+              <strong id="psAudioDropTitle">Glisse un fichier ici ou clique</strong>
+              <small id="psAudioMeta">Aucun upload - limite 100 MB</small>
             </label>
           </section>
 
-          <section class="ps-card ps-settings-card">
-            <div class="ps-card-head">
-              <div>
-                <span class="ps-eyebrow">02</span>
-                <h2>Réglages</h2>
-              </div>
-              <span class="ps-card-note">Whisper</span>
-            </div>
-
-            <div class="ps-settings-grid">
-              <label class="ps-field">
-                <span>Langue</span>
-                <select id="psLanguageSelect">
-                  <option value="french" selected>Français - PAX VI</option>
-                  <option value="auto">Auto - secours uniquement</option>
-                  <option value="english">Anglais</option>
-                </select>
-              </label>
-
-              <label class="ps-field">
-                <span>Segmentation</span>
-                <select id="psSegmentationSelect">
-                  <option value="phrase" selected>Par phrase - recommandé</option>
-                  <option value="line">Une ligne = une cue</option>
-                </select>
-              </label>
-            </div>
-
-            <label class="ps-field ps-model-field">
+          <section class="ps-block">
+            <div class="ps-block-head"><div><span class="ps-step">02</span><h2>Réglages</h2></div><span class="ps-note">Whisper</span></div>
+            <label class="ps-field">
+              <span>Langue</span>
+              <select id="psLanguageSelect">
+                <option value="french" selected>Français - PAX VI</option>
+                <option value="auto">Auto - secours uniquement</option>
+                <option value="english">Anglais</option>
+              </select>
+            </label>
+            <label class="ps-field ps-highlight-field">
               <span>Modèle de transcription</span>
               <select id="psModelSelect">
-                <option value="Xenova/whisper-tiny">Rapide - Whisper tiny FR</option>
-                <option value="Xenova/whisper-base" selected>Standard - Whisper base FR</option>
-                <option value="Xenova/whisper-small">Qualité - Whisper small FR</option>
+                <option value="onnx-community/whisper-tiny_timestamped">Rapide - Whisper tiny</option>
+                <option value="onnx-community/whisper-base_timestamped" selected>Standard - Whisper base</option>
+                <option value="onnx-community/whisper-small_timestamped">Qualité - Whisper small</option>
               </select>
-              <small id="psModelHelp">Tiny pour tester, Base par défaut, Small pour contrôler la qualité sur voix chantée dense.</small>
             </label>
-
-            <label class="ps-field ps-runtime-field">
-              <span>Runtime d'exécution</span>
+            <label class="ps-field">
+              <span>Runtime</span>
               <select id="psRuntimeSelect">
                 <option value="wasm" selected>Stable - WASM CPU</option>
-                <option value="auto">Auto - fallback stable</option>
+                <option value="auto">Auto - fallback WASM</option>
                 <option value="webgpu">Experimental - WebGPU labo</option>
               </select>
-              <small>WASM CPU reste le profil fiable. WebGPU reste expérimental.</small>
             </label>
           </section>
 
-          <section class="ps-card ps-engine-card">
-            <div class="ps-card-head ps-engine-head">
-              <div>
-                <span class="ps-eyebrow">03</span>
-                <h2>Moteur live</h2>
-              </div>
-              <button class="ps-mini" id="psTestRuntimeBtn" type="button">Test runtime</button>
+          <section class="ps-block ps-engine">
+            <div class="ps-block-head"><div><span class="ps-step">03</span><h2>Moteur</h2></div><button id="psTestRuntimeBtn" class="ps-mini" type="button">Test</button></div>
+            <div class="ps-engine-line"><strong id="psEngineModelText">Whisper base</strong><span id="psEngineRuntimeText">WASM CPU</span></div>
+            <div class="ps-status"><strong>Status</strong><span id="psStatusText">Audio + paroles requis.</span></div>
+            <div class="ps-progress"><div id="psProgressFill"></div></div>
+            <div class="ps-metrics">
+              <span id="psPhaseText">Phase: idle</span>
+              <span id="psElapsedText">Elapsed: 0s</span>
+              <span id="psEngineText">Worker: idle</span>
+              <span><b id="psLiveCueMetric">0</b> cues / <b id="psLiveWordMetric">0</b> mots</span>
             </div>
-
-            <div class="ps-engine-status" aria-live="polite">
-              <div class="ps-engine-summary">
-                <div>
-                  <span>Modèle</span>
-                  <strong id="psEngineModelText">Whisper base FR</strong>
-                </div>
-                <div>
-                  <span>Runtime</span>
-                  <strong id="psEngineRuntimeText">WASM CPU</strong>
-                </div>
-              </div>
-
-              <div class="ps-status-line">
-                <strong>Status</strong>
-                <span id="psStatusText">Ready. Audio + lyrics required.</span>
-              </div>
-
-              <div class="ps-progress-track"><div id="psProgressFill"></div></div>
-
-              <div class="ps-status-grid">
-                <span id="psPhaseText">Phase: idle</span>
-                <span id="psElapsedText">Elapsed: 0s</span>
-                <span id="psEngineText">Engine: not loaded</span>
-                <span id="psChunkText">Chunk: idle</span>
-              </div>
-
-              <p id="psProgressHint">Les cues apparaissent au fur et à mesure des chunks terminés.</p>
-            </div>
-
-            <div class="ps-actions">
-              <button class="ps-primary" id="psGenerateBtn" type="button">Générer - Whisper base</button>
-              <button class="ps-danger" id="psStopBtn" type="button" disabled>Stop</button>
-            </div>
+            <p id="psProgressHint">Worker ASR prêt. UI fluide pendant la transcription.</p>
           </section>
+
+          <div class="ps-action-row">
+            <button class="ps-primary" id="psGenerateBtn" type="button">Générer - Whisper base</button>
+            <button class="ps-danger" id="psStopBtn" type="button" disabled>Stop</button>
+          </div>
+
+          <div class="ps-export-row" aria-label="Exports">
+            <button id="psDownloadSrtBtn" class="ps-export ps-export-main" type="button" disabled>SRT</button>
+            <button id="psDownloadVttBtn" class="ps-export" type="button" disabled>VTT</button>
+            <button id="psDownloadJsonBtn" class="ps-export" type="button" disabled>JSON</button>
+          </div>
         </aside>
 
-        <section class="ps-center ps-stack" aria-label="Paroles et preview">
-          <section class="ps-card ps-lyrics-card">
-            <div class="ps-card-head">
-              <div>
-                <span class="ps-eyebrow">Paroles</span>
-                <h2>Texte propre</h2>
-              </div>
-              <span class="ps-card-note">Aucun nettoyage</span>
-            </div>
-            <textarea id="psLyricsInput" spellcheck="false" placeholder="Colle ici les paroles finales, dans l'ordre exact, une ligne par sous-titre souhaité."></textarea>
-          </section>
-
-          <section class="ps-card ps-preview-card" id="psPreviewCard">
-            <div class="ps-card-head">
-              <div>
-                <span class="ps-eyebrow">Preview</span>
-                <h2>Lecture synchronisée</h2>
-              </div>
-              <span class="ps-card-note" id="psPreviewLanguage">Langue: Français</span>
-            </div>
-
+        <section class="ps-main" aria-label="Preview et paroles">
+          <section class="ps-card ps-preview">
+            <div class="ps-card-title"><div><span class="ps-eyebrow">Preview</span><h2>Lecture synchronisée</h2></div><span id="psPreviewLanguage" class="ps-note">Langue: Français</span></div>
             <div class="ps-subtitle-stage">
               <div class="ps-subtitle-box">
                 <div class="ps-prev-line" id="psPrevLine"></div>
@@ -174,65 +110,50 @@
               </div>
             </div>
           </section>
+
+          <section class="ps-card ps-lyrics">
+            <div class="ps-card-title"><div><span class="ps-eyebrow">Paroles</span><h2>Texte propre</h2></div><span class="ps-note">Aucun nettoyage</span></div>
+            <textarea id="psLyricsInput" spellcheck="false" placeholder="Colle ici les paroles finales, dans l'ordre exact, une ligne par sous-titre souhaité."></textarea>
+          </section>
         </section>
 
-        <aside class="ps-right ps-stack" aria-label="Timeline et exports">
-          <section class="ps-card ps-cues-card" id="psResultsGrid">
-            <div class="ps-card-head">
-              <div>
-                <span class="ps-eyebrow">Timeline</span>
-                <h2>Cues générées</h2>
-              </div>
-              <span class="ps-counter" id="psCueCount">0 cues</span>
-            </div>
+        <aside class="ps-card ps-timeline" aria-label="Timeline">
+          <div class="ps-card-title">
+            <div><span class="ps-eyebrow">Timeline</span><h2>Cues générées</h2></div>
+            <span class="ps-counter" id="psCueCount">0 cues</span>
+          </div>
 
-            <div class="ps-live-metrics">
-              <div><strong id="psLiveCueMetric">0</strong><span>cues</span></div>
-              <div><strong id="psLiveWordMetric">0</strong><span>mots ASR</span></div>
-              <div><strong id="psAsrCount">0 words</strong><span>alignement</span></div>
-            </div>
+          <div class="ps-track-wrap">
+            <div class="ps-track-ruler" id="psTrackRuler"></div>
+            <div class="ps-time-track" id="psTimeTrack"><div class="ps-playhead" id="psPlayhead"></div></div>
+          </div>
 
-            <div class="ps-cue-editor" id="psCueEditor" aria-live="polite">
-              <div class="ps-cue-editor-head">
-                <span>Cue sélectionnée</span>
-                <strong id="psSelectedCueLabel">Aucune</strong>
-              </div>
-              <div class="ps-cue-editor-grid" aria-label="Ajustement immédiat des timestamps">
-                <button type="button" data-ps-adjust="start" data-ps-delta="-0.05">Début -0.05</button>
-                <button type="button" data-ps-adjust="start" data-ps-delta="0.05">Début +0.05</button>
-                <button type="button" data-ps-adjust="end" data-ps-delta="-0.05">Fin -0.05</button>
-                <button type="button" data-ps-adjust="end" data-ps-delta="0.05">Fin +0.05</button>
-                <button type="button" data-ps-adjust="cue" data-ps-delta="-0.05">Cue -0.05</button>
-                <button type="button" data-ps-adjust="cue" data-ps-delta="0.05">Cue +0.05</button>
-              </div>
+          <div class="ps-cue-editor" id="psCueEditor">
+            <div class="ps-selected-line"><span>Cue sélectionnée</span><strong id="psSelectedCueLabel">Aucune</strong></div>
+            <div class="ps-edit-fields">
+              <label><span>Début</span><input id="psStartInput" type="number" min="0" step="0.01" disabled /></label>
+              <label><span>Fin</span><input id="psEndInput" type="number" min="0" step="0.01" disabled /></label>
             </div>
+            <div class="ps-adjust-grid">
+              <button type="button" data-ps-adjust="start" data-ps-delta="-0.05">Début -0.05</button>
+              <button type="button" data-ps-adjust="start" data-ps-delta="0.05">Début +0.05</button>
+              <button type="button" data-ps-adjust="end" data-ps-delta="-0.05">Fin -0.05</button>
+              <button type="button" data-ps-adjust="end" data-ps-delta="0.05">Fin +0.05</button>
+              <button type="button" data-ps-adjust="cue" data-ps-delta="-0.05">Cue -0.05</button>
+              <button type="button" data-ps-adjust="cue" data-ps-delta="0.05">Cue +0.05</button>
+            </div>
+          </div>
 
-            <div class="ps-cue-list" id="psCueList" aria-label="Cues générées"></div>
-          </section>
-
-          <section class="ps-card ps-export-card">
-            <div class="ps-card-head">
-              <div>
-                <span class="ps-eyebrow">Sortie</span>
-                <h2>Exports</h2>
-              </div>
-              <span class="ps-card-note">SRT / VTT / JSON</span>
-            </div>
-            <div class="ps-export-buttons">
-              <button id="psDownloadSrtBtn" class="ps-export ps-export-main" type="button" disabled>SRT</button>
-              <button id="psDownloadVttBtn" class="ps-export" type="button" disabled>VTT</button>
-              <button id="psDownloadJsonBtn" class="ps-export ps-export-muted" type="button" disabled>JSON</button>
-            </div>
-            <label class="ps-transcript-label" for="psTranscriptOutput">Transcript ASR</label>
-            <textarea id="psTranscriptOutput" readonly placeholder="Le transcript brut apparaîtra ici pendant la génération."></textarea>
-          </section>
+          <div class="ps-timeline-meta"><span id="psAsrCount">0 words</span><span>Double-clic: aller à la cue</span></div>
+          <div class="ps-cue-list" id="psCueList"></div>
+          <textarea id="psTranscriptOutput" class="ps-transcript" readonly placeholder="Transcript ASR live / final"></textarea>
         </aside>
       </section>
 
       <footer class="ps-player">
         <button class="ps-play-main" id="psPlayBtn" type="button" disabled>Play preview</button>
         <button class="ps-round" id="psPlayerToggle" type="button" aria-label="Lecture">▶</button>
-        <input id="psSeekBar" type="range" min="0" max="1000" value="0" step="1" />
+        <input id="psSeekBar" type="range" min="0" max="1000" value="0" step="1" disabled />
         <span class="ps-time" id="psTimeDisplay">0:00 / 0:00</span>
         <audio id="psAudioEl" preload="metadata"></audio>
       </footer>

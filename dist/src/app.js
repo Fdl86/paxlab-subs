@@ -1,10 +1,21 @@
-const TRANSFORMERS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0';
-const PAXLAB_LANGUAGE = 'french';
-const MIN_CUE_DURATION = 0.85;
-const MAX_LOOKAHEAD_WORDS = 34;
+import {
+  CPS_MAX,
+  MIN_CUE_DURATION,
+  buildCuesFromLyricsAndAsr,
+  normalizeWord,
+  splitCleanLyrics,
+  spreadCueWords,
+} from './align.js';
+
+const APP_VERSION = 'DEV2.9';
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
-const ASR_CHUNK_SECONDS = 12;
-const ASR_CHUNK_OVERLAP_SECONDS = 1.2;
+
+const MODEL_LABELS = new Map([
+  ['onnx-community/whisper-tiny_timestamped', 'Whisper tiny'],
+  ['onnx-community/whisper-base_timestamped', 'Whisper base'],
+  ['onnx-community/whisper-small_timestamped', 'Whisper small'],
+]);
 
 const state = {
   audioFile: null,
@@ -12,18 +23,17 @@ const state = {
   duration: 0,
   cues: [],
   activeCueIndex: -1,
+  activeWordIndex: -1,
   selectedCueIndex: -1,
-  transcriberCache: new Map(),
-  wordCount: 0,
-  transcript: '',
+  cueRows: [],
+  currentWordSpans: [],
+  worker: null,
   running: false,
-  jobStartedAt: 0,
-  progressTimer: null,
-  progressBase: 0,
-  progressMax: 0,
+  startedAt: 0,
+  elapsedTimer: null,
+  transcript: '',
   asrWords: [],
-  progressiveCues: [],
-  cancelRequested: false,
+  renderRequested: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -34,13 +44,14 @@ const els = {
   audioDropTitle: $('psAudioDropTitle'),
   audioMeta: $('psAudioMeta'),
   languageSelect: $('psLanguageSelect'),
-  segmentationSelect: $('psSegmentationSelect'),
   modelSelect: $('psModelSelect'),
   runtimeSelect: $('psRuntimeSelect'),
   lyricsInput: $('psLyricsInput'),
   generateBtn: $('psGenerateBtn'),
-  playBtn: $('psPlayBtn'),
+  stopBtn: $('psStopBtn'),
   resetBtn: $('psResetBtn'),
+  testRuntimeBtn: $('psTestRuntimeBtn'),
+  runtimeBadge: $('psRuntimeBadge'),
   statusText: $('psStatusText'),
   progressFill: $('psProgressFill'),
   phaseText: $('psPhaseText'),
@@ -49,120 +60,41 @@ const els = {
   engineModelText: $('psEngineModelText'),
   engineRuntimeText: $('psEngineRuntimeText'),
   progressHint: $('psProgressHint'),
-  previewCard: $('psPreviewCard'),
+  liveCueMetric: $('psLiveCueMetric'),
+  liveWordMetric: $('psLiveWordMetric'),
   previewLanguage: $('psPreviewLanguage'),
   prevLine: $('psPrevLine'),
   activeLine: $('psActiveLine'),
   nextLine: $('psNextLine'),
   audioEl: $('psAudioEl'),
+  playBtn: $('psPlayBtn'),
   playerToggle: $('psPlayerToggle'),
   seekBar: $('psSeekBar'),
   timeDisplay: $('psTimeDisplay'),
-  resultsGrid: $('psResultsGrid'),
-  cueList: $('psCueList'),
   cueCount: $('psCueCount'),
   asrCount: $('psAsrCount'),
+  cueList: $('psCueList'),
   transcriptOutput: $('psTranscriptOutput'),
+  timeTrack: $('psTimeTrack'),
+  trackRuler: $('psTrackRuler'),
+  playhead: $('psPlayhead'),
+  selectedCueLabel: $('psSelectedCueLabel'),
+  startInput: $('psStartInput'),
+  endInput: $('psEndInput'),
   downloadSrtBtn: $('psDownloadSrtBtn'),
   downloadVttBtn: $('psDownloadVttBtn'),
   downloadJsonBtn: $('psDownloadJsonBtn'),
-  stopBtn: $('psStopBtn'),
-  testRuntimeBtn: $('psTestRuntimeBtn'),
-  chunkText: $('psChunkText'),
-  liveCueMetric: $('psLiveCueMetric'),
-  liveWordMetric: $('psLiveWordMetric'),
-  runtimeBadge: $('psRuntimeBadge'),
-  selectedCueLabel: $('psSelectedCueLabel'),
   cueAdjustButtons: Array.from(document.querySelectorAll('[data-ps-adjust]')),
 };
 
-function selectedOptionLabel(select) {
-  return select?.selectedOptions?.[0]?.textContent?.trim() || '';
+function modelLabel(value = els.modelSelect.value) {
+  return MODEL_LABELS.get(value) || 'Whisper base';
 }
 
-function whisperModelShortLabel(value = els.modelSelect?.value) {
-  if (value?.includes('whisper-small')) return 'Whisper small FR';
-  if (value?.includes('whisper-tiny')) return 'Whisper tiny FR';
-  return 'Whisper base FR';
-}
-
-function runtimeShortLabel(value = els.runtimeSelect?.value) {
+function runtimeLabel(value = els.runtimeSelect.value) {
   if (value === 'webgpu') return 'WebGPU labo';
   if (value === 'auto') return 'Auto -> WASM';
   return 'WASM CPU';
-}
-
-function updateEngineSummary() {
-  const model = whisperModelShortLabel();
-  const runtime = runtimeShortLabel();
-  if (els.engineModelText) els.engineModelText.textContent = model;
-  if (els.engineRuntimeText) els.engineRuntimeText.textContent = runtime;
-  if (els.engineText && !state.running) els.engineText.textContent = `Engine: ${model} / ${runtime}`;
-  if (els.generateBtn && !state.running) els.generateBtn.textContent = `Générer - ${model.replace(' FR', '')}`;
-}
-
-function setLiveMetrics() {
-  if (els.liveCueMetric) els.liveCueMetric.textContent = String(state.cues.length || state.progressiveCues.length || 0);
-  if (els.liveWordMetric) els.liveWordMetric.textContent = String(state.wordCount || state.asrWords.length || 0);
-  if (els.runtimeBadge) els.runtimeBadge.textContent = state.running ? 'RUNNING' : 'READY';
-  updateEngineSummary();
-}
-
-function setStatus(text, progress = null, hint = null) {
-  els.statusText.textContent = text;
-  if (typeof progress === 'number') {
-    els.progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
-  }
-  if (hint !== null && els.progressHint) els.progressHint.textContent = hint;
-  if (els.runtimeBadge && text) els.runtimeBadge.textContent = state.running ? 'RUNNING' : 'READY';
-}
-
-
-function setPhase(phase, progress = null, hint = null) {
-  if (els.phaseText) els.phaseText.textContent = `Phase: ${phase}`;
-  if (typeof progress === 'number') {
-    els.progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
-  }
-  if (hint !== null && els.progressHint) els.progressHint.textContent = hint;
-  if (els.chunkText) els.chunkText.textContent = phase.startsWith('chunk') ? phase : els.chunkText.textContent || 'Chunk: idle';
-}
-
-
-function formatElapsed(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = String(total % 60).padStart(2, '0');
-  return m > 0 ? `${m}:${s}` : `${total}s`;
-}
-
-function startProgressHeartbeat(phase, base, max, hint) {
-  stopProgressHeartbeat();
-  state.jobStartedAt = performance.now();
-  state.progressBase = base;
-  state.progressMax = max;
-  setPhase(phase, base, hint);
-
-  state.progressTimer = window.setInterval(() => {
-    const elapsedMs = performance.now() - state.jobStartedAt;
-    if (els.elapsedText) els.elapsedText.textContent = `Elapsed: ${formatElapsed(elapsedMs)}`;
-
-    const elapsedSec = elapsedMs / 1000;
-    const softProgress = base + (max - base) * (1 - Math.exp(-elapsedSec / 85));
-    els.progressFill.style.width = `${Math.min(max, softProgress).toFixed(1)}%`;
-
-    if (elapsedSec > 180 && els.progressHint) {
-      els.progressHint.textContent = 'Toujours en cours. Sur WASM CPU, Whisper peut être très lent sur un morceau complet. Pour tester vite, utilise Fast test - Whisper tiny FR.';
-    } else if (elapsedSec > 60 && els.progressHint) {
-      els.progressHint.textContent = 'Toujours en cours. Le navigateur ne donne pas de pourcentage exact pendant la transcription, mais le job est actif.';
-    }
-  }, 1000);
-}
-
-function stopProgressHeartbeat() {
-  if (state.progressTimer) {
-    window.clearInterval(state.progressTimer);
-    state.progressTimer = null;
-  }
 }
 
 function formatBytes(bytes) {
@@ -175,15 +107,14 @@ function formatBytes(bytes) {
 }
 
 function formatClock(seconds) {
-  if (!Number.isFinite(seconds)) seconds = 0;
-  const s = Math.max(0, seconds);
+  const s = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
   const m = Math.floor(s / 60);
   const r = Math.floor(s % 60).toString().padStart(2, '0');
   return `${m}:${r}`;
 }
 
 function formatSrtTime(seconds) {
-  const msTotal = Math.max(0, Math.round(seconds * 1000));
+  const msTotal = Math.max(0, Math.round((Number.isFinite(seconds) ? seconds : 0) * 1000));
   const ms = String(msTotal % 1000).padStart(3, '0');
   const totalSeconds = Math.floor(msTotal / 1000);
   const s = String(totalSeconds % 60).padStart(2, '0');
@@ -197,540 +128,70 @@ function formatVttTime(seconds) {
   return formatSrtTime(seconds).replace(',', '.');
 }
 
-function normalizeWord(text) {
-  return String(text || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/œ/g, 'oe')
-    .replace(/æ/g, 'ae')
-    .replace(/[’‘`]/g, "'")
-    .replace(/[^a-z0-9']/g, '')
-    .trim();
+function setProgress(pct) {
+  const value = Math.max(0, Math.min(100, Number(pct) || 0));
+  els.progressFill.style.width = `${value}%`;
 }
 
-function levenshtein(a, b) {
-  if (a === b) return 0;
-  if (!a) return b.length;
-  if (!b) return a.length;
-  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  const curr = Array(b.length + 1).fill(0);
-  for (let i = 1; i <= a.length; i += 1) {
-    curr[0] = i;
-    for (let j = 1; j <= b.length; j += 1) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
-    }
-    for (let j = 0; j <= b.length; j += 1) prev[j] = curr[j];
-  }
-  return prev[b.length];
+function setStatus(text, pct = null, hint = null) {
+  els.statusText.textContent = text;
+  if (pct !== null) setProgress(pct);
+  if (hint !== null) els.progressHint.textContent = hint;
 }
 
-function similarity(a, b) {
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-  if (a.length <= 2 || b.length <= 2) return 0;
-  if (a.includes(b) || b.includes(a)) {
-    return Math.min(a.length, b.length) / Math.max(a.length, b.length);
-  }
-  const dist = levenshtein(a, b);
-  return 1 - dist / Math.max(a.length, b.length);
+function setPhase(text) {
+  els.phaseText.textContent = `Phase: ${text}`;
 }
 
-function splitCleanLyrics(raw) {
-  return String(raw || '')
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+function setMetrics() {
+  els.liveCueMetric.textContent = String(state.cues.length);
+  els.liveWordMetric.textContent = String(state.asrWords.length);
+  els.asrCount.textContent = `${state.asrWords.length} words`;
+  els.cueCount.textContent = `${state.cues.length} cues`;
+  els.runtimeBadge.textContent = state.running ? 'RUNNING' : 'READY';
+  els.runtimeBadge.classList.toggle('ps-pill-running', state.running);
 }
 
-function tokenizeDisplayLine(text) {
-  return String(text || '').match(/\S+/g) || [];
+function updateEngineSummary() {
+  const model = modelLabel();
+  const runtime = runtimeLabel();
+  els.engineModelText.textContent = model;
+  els.engineRuntimeText.textContent = runtime;
+  els.engineText.textContent = `Worker: ${state.running ? 'running' : 'idle'} - ${model} / ${runtime}`;
+  if (!state.running) els.generateBtn.textContent = `Générer - ${model}`;
 }
 
-function flattenLyrics(lines) {
-  const words = [];
-  lines.forEach((line, lineIndex) => {
-    tokenizeDisplayLine(line).forEach((text, wordIndex) => {
-      const norm = normalizeWord(text);
-      words.push({ text, norm, lineIndex, wordIndex, start: null, end: null, score: 0 });
-    });
-  });
-  return words;
+function startElapsedTimer() {
+  stopElapsedTimer();
+  state.startedAt = performance.now();
+  els.elapsedText.textContent = 'Elapsed: 0s';
+  state.elapsedTimer = window.setInterval(() => {
+    const sec = Math.floor((performance.now() - state.startedAt) / 1000);
+    els.elapsedText.textContent = `Elapsed: ${formatClock(sec)}`;
+  }, 500);
 }
 
-function extractAsrWords(output, offsetSeconds = 0) {
-  const chunks = Array.isArray(output?.chunks) ? output.chunks : [];
-  const words = [];
-  for (const chunk of chunks) {
-    const text = String(chunk?.text || '').trim();
-    const ts = chunk?.timestamp || chunk?.timestamps;
-    if (!text || !Array.isArray(ts)) continue;
-    const start = Number(ts[0]);
-    const end = Number(ts[1]);
-    const norm = normalizeWord(text);
-    if (!norm || !Number.isFinite(start) || !Number.isFinite(end)) continue;
-    words.push({ text, norm, start: start + offsetSeconds, end: (end > start ? end : start + 0.18) + offsetSeconds });
-  }
-  return words.sort((a, b) => a.start - b.start);
+function stopElapsedTimer() {
+  if (state.elapsedTimer) window.clearInterval(state.elapsedTimer);
+  state.elapsedTimer = null;
 }
 
-function alignWords(lyricsWords, asrWords) {
-  let cursor = 0;
-  const validLyricWords = lyricsWords.filter((word) => word.norm);
-
-  for (const lyric of validLyricWords) {
-    let bestIndex = -1;
-    let bestScore = 0;
-    const searchEnd = Math.min(asrWords.length, cursor + MAX_LOOKAHEAD_WORDS);
-
-    for (let i = cursor; i < searchEnd; i += 1) {
-      const rawScore = similarity(lyric.norm, asrWords[i].norm);
-      const distancePenalty = Math.max(0, i - cursor) * 0.012;
-      const score = rawScore - distancePenalty;
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = i;
-      }
-    }
-
-    const threshold = lyric.norm.length <= 3 ? 0.92 : 0.72;
-    if (bestIndex >= 0 && bestScore >= threshold) {
-      lyric.start = asrWords[bestIndex].start;
-      lyric.end = asrWords[bestIndex].end;
-      lyric.score = Math.max(0, Math.min(1, bestScore));
-      cursor = bestIndex + 1;
-    }
-  }
-
-  return lyricsWords;
-}
-
-function interpolateCueWords(lineWords, cueStart, cueEnd) {
-  const timed = lineWords.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
-  const displayWords = lineWords.map((word) => ({ ...word }));
-
-  if (timed.length === 0) {
-    return spreadWordsByWeight(displayWords, cueStart, cueEnd);
-  }
-
-  displayWords.forEach((word, index) => {
-    if (Number.isFinite(word.start) && Number.isFinite(word.end)) return;
-
-    let prev = null;
-    let next = null;
-    for (let i = index - 1; i >= 0; i -= 1) {
-      if (Number.isFinite(displayWords[i].start) && Number.isFinite(displayWords[i].end)) { prev = displayWords[i]; break; }
-    }
-    for (let i = index + 1; i < displayWords.length; i += 1) {
-      if (Number.isFinite(displayWords[i].start) && Number.isFinite(displayWords[i].end)) { next = displayWords[i]; break; }
-    }
-
-    if (prev && next) {
-      word.start = prev.end + (next.start - prev.end) * 0.35;
-      word.end = prev.end + (next.start - prev.end) * 0.65;
-    } else if (prev) {
-      const step = Math.max(0.18, (cueEnd - prev.end) / (displayWords.length - index + 1));
-      word.start = prev.end + step * 0.2;
-      word.end = Math.min(cueEnd, word.start + step * 0.8);
-    } else if (next) {
-      const step = Math.max(0.18, (next.start - cueStart) / (index + 2));
-      word.end = Math.max(cueStart, next.start - step * 0.2);
-      word.start = Math.max(cueStart, word.end - step * 0.8);
-    }
-  });
-
-  return spreadMissingSafely(displayWords, cueStart, cueEnd);
-}
-
-function spreadWordsByWeight(words, start, end) {
-  const duration = Math.max(MIN_CUE_DURATION, end - start);
-  const weights = words.map((word) => Math.max(1, normalizeWord(word.text).length || 1));
-  const total = weights.reduce((a, b) => a + b, 0) || 1;
-  let cursor = start;
-  return words.map((word, index) => {
-    const d = duration * (weights[index] / total);
-    const item = { ...word, start: cursor, end: index === words.length - 1 ? end : cursor + d };
-    cursor += d;
-    return item;
-  });
-}
-
-function spreadMissingSafely(words, start, end) {
-  const fallback = spreadWordsByWeight(words, start, end);
-  return words.map((word, index) => {
-    const hasValid = Number.isFinite(word.start) && Number.isFinite(word.end) && word.end >= start && word.start <= end;
-    if (!hasValid) return fallback[index];
-    return {
-      ...word,
-      start: Math.max(start, word.start),
-      end: Math.min(end, Math.max(word.end, word.start + 0.08)),
-    };
-  });
-}
-
-function buildCuesFromAlignment(lines, alignedWords, audioDuration) {
-  const byLine = lines.map((line, lineIndex) => ({ line, lineIndex, words: [] }));
-  for (const word of alignedWords) {
-    if (byLine[word.lineIndex]) byLine[word.lineIndex].words.push(word);
-  }
-
-  const rough = byLine.map((entry) => {
-    const timed = entry.words.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
-    if (timed.length === 0) return { ...entry, start: null, end: null, confidence: 0 };
-    const start = Math.min(...timed.map((word) => word.start));
-    const end = Math.max(...timed.map((word) => word.end));
-    const confidence = timed.reduce((sum, word) => sum + (word.score || 0), 0) / Math.max(1, entry.words.filter((w) => w.norm).length);
-    return { ...entry, start, end, confidence };
-  });
-
-  fillMissingLineTimes(rough, audioDuration);
-  enforceCueOrder(rough, audioDuration);
-
-  return rough.map((entry, index) => ({
-    id: index + 1,
-    start: entry.start,
-    end: entry.end,
-    text: entry.line,
-    confidence: Number(entry.confidence || 0),
-    words: interpolateCueWords(entry.words, entry.start, entry.end),
-  }));
-}
-
-function fillMissingLineTimes(entries, duration) {
-  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : entries.length * 2.4;
-  const totalWeight = entries.reduce((sum, entry) => sum + Math.max(1, entry.line.length), 0) || 1;
-  let proportionalCursor = 0.8;
-
-  entries.forEach((entry) => {
-    if (Number.isFinite(entry.start) && Number.isFinite(entry.end)) return;
-    const d = Math.max(MIN_CUE_DURATION, (safeDuration * 0.82) * (Math.max(1, entry.line.length) / totalWeight));
-    entry.start = proportionalCursor;
-    entry.end = Math.min(safeDuration - 0.25, proportionalCursor + d);
-    entry.confidence = 0;
-    proportionalCursor = entry.end + 0.12;
-  });
-
-  for (let i = 0; i < entries.length; i += 1) {
-    if (entries[i].confidence > 0) continue;
-    let prev = null;
-    let next = null;
-    for (let p = i - 1; p >= 0; p -= 1) {
-      if (entries[p].confidence > 0) { prev = p; break; }
-    }
-    for (let n = i + 1; n < entries.length; n += 1) {
-      if (entries[n].confidence > 0) { next = n; break; }
-    }
-    if (prev !== null && next !== null) {
-      const gapStart = entries[prev].end + 0.08;
-      const gapEnd = entries[next].start - 0.08;
-      const count = next - prev - 1;
-      const slot = Math.max(MIN_CUE_DURATION, (gapEnd - gapStart) / Math.max(1, count));
-      for (let k = prev + 1; k < next; k += 1) {
-        const local = k - prev - 1;
-        entries[k].start = gapStart + slot * local;
-        entries[k].end = Math.min(gapEnd, entries[k].start + slot * 0.88);
-      }
-      i = next;
-    }
+function canUseModuleWorker() {
+  try {
+    const blob = new Blob([''], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const worker = new Worker(url, { type: 'module' });
+    worker.terminate();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (_) {
+    return false;
   }
 }
-
-function enforceCueOrder(entries, duration) {
-  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : entries.length * 2.4;
-  let prevEnd = 0;
-  for (let i = 0; i < entries.length; i += 1) {
-    const entry = entries[i];
-    entry.start = Number.isFinite(entry.start) ? entry.start : prevEnd + 0.1;
-    entry.end = Number.isFinite(entry.end) ? entry.end : entry.start + 1.8;
-    entry.start = Math.max(0, entry.start);
-    if (entry.start < prevEnd + 0.02) entry.start = prevEnd + 0.02;
-    if (entry.end < entry.start + MIN_CUE_DURATION) entry.end = entry.start + MIN_CUE_DURATION;
-    if (entry.end > safeDuration) entry.end = Math.max(entry.start + 0.25, safeDuration - 0.05);
-    prevEnd = entry.end;
-  }
-}
-
-
-function buildPartialCuesFromAlignment(lines, alignedWords, audioDuration) {
-  const byLine = lines.map((line, lineIndex) => ({ line, lineIndex, words: [] }));
-  for (const word of alignedWords) {
-    if (byLine[word.lineIndex]) byLine[word.lineIndex].words.push(word);
-  }
-
-  const entries = [];
-  for (const entry of byLine) {
-    const normWords = entry.words.filter((word) => word.norm);
-    const timed = entry.words.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
-    if (timed.length === 0) continue;
-
-    const coverage = timed.length / Math.max(1, normWords.length);
-    if (normWords.length >= 5 && coverage < 0.2) continue;
-
-    const start = Math.min(...timed.map((word) => word.start));
-    let end = Math.max(...timed.map((word) => word.end));
-    if (end - start < 0.55) {
-      const estimated = Math.max(MIN_CUE_DURATION, Math.min(3.2, entry.line.length / 15));
-      end = start + estimated;
-    }
-    entries.push({
-      ...entry,
-      start,
-      end: Number.isFinite(audioDuration) && audioDuration > 0 ? Math.min(audioDuration, end) : end,
-      confidence: timed.reduce((sum, word) => sum + (word.score || 0), 0) / Math.max(1, normWords.length),
-    });
-  }
-
-  entries.sort((a, b) => a.start - b.start);
-  enforceCueOrder(entries, audioDuration);
-
-  return entries.map((entry, index) => ({
-    id: index + 1,
-    sourceLine: entry.lineIndex + 1,
-    start: entry.start,
-    end: entry.end,
-    text: entry.line,
-    confidence: Number(entry.confidence || 0),
-    partial: true,
-    words: interpolateCueWords(entry.words, entry.start, entry.end),
-  }));
-}
-
-function dedupeAsrWords(words) {
-  const sorted = [...words].sort((a, b) => a.start - b.start);
-  const deduped = [];
-  for (const word of sorted) {
-    const last = deduped[deduped.length - 1];
-    if (last && Math.abs(last.start - word.start) < 0.18 && last.norm === word.norm) {
-      if ((word.end - word.start) > (last.end - last.start)) deduped[deduped.length - 1] = word;
-      continue;
-    }
-    deduped.push(word);
-  }
-  return deduped;
-}
-
-async function decodeAudioToMono16k(file) {
-  const arrayBuffer = await file.arrayBuffer();
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) throw new Error('AudioContext indisponible dans ce navigateur.');
-  const ctx = new AudioContextClass();
-  const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-  const sourceRate = audioBuffer.sampleRate;
-  const sourceLength = audioBuffer.length;
-  const mono = new Float32Array(sourceLength);
-
-  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch += 1) {
-    const data = audioBuffer.getChannelData(ch);
-    for (let i = 0; i < sourceLength; i += 1) mono[i] += data[i] / audioBuffer.numberOfChannels;
-  }
-  if (typeof ctx.close === 'function') ctx.close().catch(() => {});
-
-  if (sourceRate === ASR_SAMPLE_RATE) return mono;
-
-  const targetLength = Math.max(1, Math.round((mono.length / sourceRate) * ASR_SAMPLE_RATE));
-  const resampled = new Float32Array(targetLength);
-  const ratio = sourceRate / ASR_SAMPLE_RATE;
-  for (let i = 0; i < targetLength; i += 1) {
-    const pos = i * ratio;
-    const left = Math.floor(pos);
-    const right = Math.min(left + 1, mono.length - 1);
-    const t = pos - left;
-    resampled[i] = mono[left] * (1 - t) + mono[right] * t;
-  }
-  return resampled;
-}
-
-function sliceAudio(audio, startSeconds, endSeconds) {
-  const start = Math.max(0, Math.floor(startSeconds * ASR_SAMPLE_RATE));
-  const end = Math.min(audio.length, Math.ceil(endSeconds * ASR_SAMPLE_RATE));
-  return audio.slice(start, end);
-}
-
-function buildChunkPlan(duration) {
-  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
-  const chunks = [];
-  let start = 0;
-  while (start < safeDuration) {
-    const end = Math.min(safeDuration, start + ASR_CHUNK_SECONDS);
-    chunks.push({ index: chunks.length + 1, start, end });
-    if (end >= safeDuration) break;
-    start = Math.max(0, end - ASR_CHUNK_OVERLAP_SECONDS);
-  }
-  return chunks.length ? chunks : [{ index: 1, start: 0, end: Math.max(ASR_CHUNK_SECONDS, safeDuration) }];
-}
-
-function updateProgressiveCues(lines, asrWords, chunkIndex, chunkCount) {
-  const lyricWords = flattenLyrics(lines);
-  const aligned = alignWords(lyricWords, asrWords);
-  const partialCues = buildPartialCuesFromAlignment(lines, aligned, state.duration);
-  state.cues = partialCues;
-  state.progressiveCues = partialCues;
-  state.wordCount = asrWords.length;
-  setStatus(`Transcription chunk ${chunkIndex}/${chunkCount}: ${partialCues.length} cues visibles.`, 50 + Math.round((chunkIndex / Math.max(1, chunkCount)) * 35), 'Les cues apparaissent au fur et à mesure des segments audio terminés. Résultat final consolidé à la fin.');
-  setPhase('transcription progressive', 50 + Math.round((chunkIndex / Math.max(1, chunkCount)) * 35), `${partialCues.length} cues affichées - ${asrWords.length} mots détectés.`);
-  refreshOutputs(true);
-  setLiveMetrics();
-}
-
-function activeCueAt(time) {
-  return state.cues.findIndex((cue) => time >= cue.start && time <= cue.end);
-}
-
-function activeWordIndex(cue, time) {
-  if (!cue?.words?.length) return -1;
-  let fallback = -1;
-  for (let i = 0; i < cue.words.length; i += 1) {
-    const word = cue.words[i];
-    if (!normalizeWord(word.text)) continue;
-    if (time >= word.start && time <= word.end) return i;
-    if (time >= word.start) fallback = i;
-  }
-  return fallback;
-}
-
-function renderActiveLine(cue, time) {
-  els.activeLine.innerHTML = '';
-  els.activeLine.classList.toggle('ps-active-line-empty', !cue);
-  if (!cue) {
-    els.activeLine.textContent = state.cues.length === 0 ? 'La ligne synchronisée apparaîtra ici.' : '';
-    return;
-  }
-  const activeIndex = activeWordIndex(cue, time);
-  cue.words.forEach((word, index) => {
-    const span = document.createElement('span');
-    span.textContent = word.text;
-    if (index === activeIndex && normalizeWord(word.text)) span.className = 'ps-active-word';
-    els.activeLine.appendChild(span);
-  });
-}
-
-function updateSelectedCueUi() {
-  const cue = state.cues[state.selectedCueIndex];
-  if (els.selectedCueLabel) {
-    els.selectedCueLabel.textContent = cue ? `#${state.selectedCueIndex + 1} - ${formatClock(cue.start)} -> ${formatClock(cue.end)}` : 'Aucune';
-  }
-  els.cueAdjustButtons.forEach((button) => { button.disabled = !cue; });
-  const rows = els.cueList.querySelectorAll('.ps-cue-row');
-  rows.forEach((row) => row.classList.toggle('ps-is-selected', Number(row.dataset.index) === state.selectedCueIndex));
-}
-
-function selectCue(index, shouldSeek = false, shouldPlay = false) {
-  if (index < 0 || index >= state.cues.length) return;
-  state.selectedCueIndex = index;
-  const cue = state.cues[index];
-  if (shouldSeek && cue) {
-    els.audioEl.currentTime = Math.max(0, cue.start + 0.02);
-    if (shouldPlay) els.audioEl.play().catch(() => {});
-  }
-  updateSelectedCueUi();
-}
-
-function retimeCueWords(cue, oldStart, oldEnd, newStart, newEnd) {
-  const oldDuration = Math.max(0.05, oldEnd - oldStart);
-  const newDuration = Math.max(0.05, newEnd - newStart);
-  cue.words = (cue.words || []).map((word) => {
-    const relStart = (Number(word.start) - oldStart) / oldDuration;
-    const relEnd = (Number(word.end) - oldStart) / oldDuration;
-    return {
-      ...word,
-      start: newStart + Math.max(0, Math.min(1, relStart)) * newDuration,
-      end: newStart + Math.max(0, Math.min(1, relEnd)) * newDuration,
-    };
-  });
-}
-
-function adjustSelectedCue(target, delta) {
-  const index = state.selectedCueIndex;
-  const cue = state.cues[index];
-  if (!cue) return;
-  const previous = state.cues[index - 1];
-  const next = state.cues[index + 1];
-  const minStart = previous ? previous.end + 0.02 : 0;
-  const maxEnd = next ? next.start - 0.02 : (state.duration || Number.POSITIVE_INFINITY);
-  const minDuration = 0.25;
-  const oldStart = cue.start;
-  const oldEnd = cue.end;
-  let newStart = cue.start;
-  let newEnd = cue.end;
-
-  if (target === 'start') {
-    newStart = Math.max(minStart, Math.min(cue.start + delta, cue.end - minDuration));
-  } else if (target === 'end') {
-    newEnd = Math.min(maxEnd, Math.max(cue.end + delta, cue.start + minDuration));
-  } else {
-    const span = cue.end - cue.start;
-    newStart = cue.start + delta;
-    newEnd = cue.end + delta;
-    if (newStart < minStart) {
-      newStart = minStart;
-      newEnd = minStart + span;
-    }
-    if (newEnd > maxEnd) {
-      newEnd = maxEnd;
-      newStart = maxEnd - span;
-    }
-    newStart = Math.max(0, newStart);
-    newEnd = Math.max(newStart + minDuration, newEnd);
-  }
-
-  cue.start = Number(newStart.toFixed(3));
-  cue.end = Number(newEnd.toFixed(3));
-  retimeCueWords(cue, oldStart, oldEnd, cue.start, cue.end);
-  renderCueList();
-  updateSelectedCueUi();
-  renderActiveLine(state.cues[activeCueAt(els.audioEl.currentTime || 0)], els.audioEl.currentTime || 0);
-}
-
-function renderCueList() {
-  els.cueList.innerHTML = '';
-  state.cues.forEach((cue, index) => {
-    const row = document.createElement('div');
-    row.className = 'ps-cue-row';
-    row.dataset.index = String(index);
-    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><em>${formatClock(cue.end)}</em></span><span>${escapeHtml(cue.text)}</span>`;
-    row.addEventListener('click', () => selectCue(index));
-    row.addEventListener('dblclick', () => selectCue(index, true, true));
-    els.cueList.appendChild(row);
-  });
-  if (state.selectedCueIndex >= state.cues.length) state.selectedCueIndex = state.cues.length - 1;
-  els.cueCount.textContent = `${state.cues.length} cues${state.running ? ' live' : ''}`;
-  updateSelectedCueUi();
-}
-
-function updatePreview() {
-  const time = els.audioEl.currentTime || 0;
-  if (state.duration > 0) els.seekBar.value = String(Math.round((time / state.duration) * 1000));
-  els.timeDisplay.textContent = `${formatClock(time)} / ${formatClock(state.duration)}`;
-
-  const index = activeCueAt(time);
-  if (index !== state.activeCueIndex) {
-    state.activeCueIndex = index;
-    const rows = els.cueList.querySelectorAll('.ps-cue-row');
-    rows.forEach((row) => row.classList.toggle('ps-is-active', Number(row.dataset.index) === index));
-  }
-
-  const cue = state.cues[index];
-  els.prevLine.textContent = index > 0 ? state.cues[index - 1].text : '';
-  els.nextLine.textContent = index >= 0 && index < state.cues.length - 1 ? state.cues[index + 1].text : '';
-  if (index < 0 && state.cues.length > 0) {
-    els.prevLine.textContent = '';
-    els.nextLine.textContent = '';
-  }
-  renderActiveLine(cue, time);
-
-  requestAnimationFrame(updatePreview);
-}
-
-function escapeHtml(text) {
-  return String(text).replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[ch]));
-}
-
 
 async function webgpuPreflight() {
   if (!navigator.gpu) return false;
-  setPhase('test webgpu', 2, 'Vérification rapide WebGPU avant chargement du modèle.');
+  setStatus('Test WebGPU...', 2, 'Vérification rapide avant chargement du modèle.');
   try {
     const adapter = await Promise.race([
       navigator.gpu.requestAdapter(),
@@ -749,158 +210,448 @@ async function webgpuPreflight() {
   }
 }
 
-async function getTranscriber() {
-  const model = els.modelSelect.value;
+async function decodeAudioToMono16k(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) throw new Error('AudioContext indisponible dans ce navigateur.');
+  const ctx = new AudioCtx();
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  try { await ctx.close(); } catch (_) {}
+
+  state.duration = audioBuffer.duration;
+  const length = Math.ceil(audioBuffer.duration * ASR_SAMPLE_RATE);
+  if (window.OfflineAudioContext) {
+    const offline = new OfflineAudioContext(1, length, ASR_SAMPLE_RATE);
+    const source = offline.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(offline.destination);
+    source.start(0);
+    const rendered = await offline.startRendering();
+    return new Float32Array(rendered.getChannelData(0));
+  }
+
+  const sourceRate = audioBuffer.sampleRate;
+  const channelCount = audioBuffer.numberOfChannels || 1;
+  const output = new Float32Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const srcIndex = Math.min(audioBuffer.length - 1, Math.round((i / ASR_SAMPLE_RATE) * sourceRate));
+    let sample = 0;
+    for (let ch = 0; ch < channelCount; ch += 1) sample += audioBuffer.getChannelData(ch)[srcIndex] || 0;
+    output[i] = sample / channelCount;
+  }
+  return output;
+}
+
+function setAudioFile(file) {
+  if (!file) return;
+  if (file.size > MAX_FILE_BYTES) {
+    setStatus(`Fichier trop lourd (${formatBytes(file.size)}). Limite: 100 MB.`, 0, 'Utilise un MP3/WAV plus léger pour garder le traitement navigateur stable.');
+    return;
+  }
+  if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+  state.audioFile = file;
+  state.audioUrl = URL.createObjectURL(file);
+  state.duration = 0;
+  els.audioEl.src = state.audioUrl;
+  els.audioDropTitle.textContent = file.name;
+  els.audioMeta.textContent = `${formatBytes(file.size)} - local only`;
+  els.playBtn.disabled = false;
+  setStatus('Audio chargé. Durée détectée après lecture des métadonnées.', 0, 'Colle les paroles propres puis génère les sous-titres.');
+}
+
+function resetApp() {
+  stopGeneration();
+  if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+  Object.assign(state, {
+    audioFile: null,
+    audioUrl: '',
+    duration: 0,
+    cues: [],
+    activeCueIndex: -1,
+    activeWordIndex: -1,
+    selectedCueIndex: -1,
+    cueRows: [],
+    currentWordSpans: [],
+    worker: null,
+    running: false,
+    startedAt: 0,
+    transcript: '',
+    asrWords: [],
+  });
+  els.audioInput.value = '';
+  els.audioEl.removeAttribute('src');
+  els.audioEl.load();
+  els.audioDropTitle.textContent = 'Glisse un fichier ici ou clique';
+  els.audioMeta.textContent = 'Aucun upload - limite 100 MB';
+  els.seekBar.value = '0';
+  els.seekBar.disabled = true;
+  els.playBtn.disabled = true;
+  els.playerToggle.textContent = '▶';
+  els.lyricsInput.value = '';
+  els.transcriptOutput.value = '';
+  setStatus('Audio + paroles requis.', 0, 'Worker ASR prêt. UI fluide pendant la transcription.');
+  setPhase('idle');
+  updateCueSelection(-1);
+  renderCueList();
+  renderTrack();
+  renderCueText(null);
+  setMetrics();
+  updateEngineSummary();
+  els.timeDisplay.textContent = '0:00 / 0:00';
+}
+
+function activeCueAt(time) {
+  const cues = state.cues;
+  if (!cues.length) return -1;
+  const current = state.activeCueIndex;
+  if (current >= 0 && current < cues.length && time >= cues[current].start && time <= cues[current].end) return current;
+  let low = 0;
+  let high = cues.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const cue = cues[mid];
+    if (time < cue.start) high = mid - 1;
+    else if (time > cue.end) low = mid + 1;
+    else return mid;
+  }
+  return -1;
+}
+
+function activeWordAt(cue, time) {
+  if (!cue?.words?.length) return -1;
+  const words = cue.words;
+  let low = 0;
+  let high = words.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const word = words[mid];
+    if (time < word.start) high = mid - 1;
+    else if (time > word.end) low = mid + 1;
+    else return mid;
+  }
+  return -1;
+}
+
+function renderCueText(cue) {
+  state.currentWordSpans = [];
+  state.activeWordIndex = -1;
+  els.activeLine.textContent = '';
+  if (!cue) {
+    if (state.cues.length) return;
+    els.activeLine.textContent = 'La ligne synchronisée apparaîtra ici.';
+    return;
+  }
+  const words = cue.words?.length ? cue.words : spreadCueWords(cue.text, cue.start, cue.end);
+  words.forEach((word, index) => {
+    if (index > 0) els.activeLine.append(document.createTextNode(' '));
+    const span = document.createElement('span');
+    span.className = 'ps-word';
+    span.textContent = word.text;
+    span.dataset.norm = word.norm || normalizeWord(word.text);
+    els.activeLine.append(span);
+    state.currentWordSpans.push(span);
+  });
+}
+
+function updatePreviewFrame() {
+  state.renderRequested = false;
+  const audio = els.audioEl;
+  const time = audio.currentTime || 0;
+  if (state.duration > 0) {
+    els.seekBar.value = String(Math.round((time / state.duration) * 1000));
+    els.timeDisplay.textContent = `${formatClock(time)} / ${formatClock(state.duration)}`;
+    els.playhead.style.left = `${Math.max(0, Math.min(100, (time / state.duration) * 100))}%`;
+  }
+
+  const cueIndex = activeCueAt(time);
+  if (cueIndex !== state.activeCueIndex) {
+    if (state.cueRows[state.activeCueIndex]) state.cueRows[state.activeCueIndex].classList.remove('ps-is-active');
+    state.activeCueIndex = cueIndex;
+    if (state.cueRows[cueIndex]) state.cueRows[cueIndex].classList.add('ps-is-active');
+    const cue = state.cues[cueIndex];
+    els.prevLine.textContent = cueIndex > 0 ? state.cues[cueIndex - 1].text : '';
+    els.nextLine.textContent = cueIndex >= 0 && cueIndex < state.cues.length - 1 ? state.cues[cueIndex + 1].text : '';
+    if (cueIndex < 0) { els.prevLine.textContent = ''; els.nextLine.textContent = ''; }
+    renderCueText(cue);
+  }
+
+  const cue = state.cues[cueIndex];
+  const wordIndex = activeWordAt(cue, time);
+  if (wordIndex !== state.activeWordIndex) {
+    if (state.currentWordSpans[state.activeWordIndex]) state.currentWordSpans[state.activeWordIndex].classList.remove('ps-active-word');
+    state.activeWordIndex = wordIndex;
+    if (state.currentWordSpans[wordIndex]) state.currentWordSpans[wordIndex].classList.add('ps-active-word');
+  }
+
+  if (!audio.paused) requestRenderFrame();
+}
+
+function requestRenderFrame() {
+  if (state.renderRequested) return;
+  state.renderRequested = true;
+  requestAnimationFrame(updatePreviewFrame);
+}
+
+function renderCueList() {
+  els.cueList.innerHTML = '';
+  state.cueRows = [];
+  state.cues.forEach((cue, index) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'ps-cue-row';
+    row.dataset.index = String(index);
+    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><small>${formatClock(cue.end)}</small></span><span class="ps-cue-text"></span><span class="ps-cue-conf">${Math.round((cue.confidence || 0) * 100)}%</span>`;
+    row.querySelector('.ps-cue-text').textContent = cue.text;
+    row.addEventListener('click', () => updateCueSelection(index));
+    row.addEventListener('dblclick', () => seekToCue(index, true));
+    els.cueList.append(row);
+    state.cueRows.push(row);
+  });
+  setMetrics();
+}
+
+function renderTrack() {
+  els.trackRuler.innerHTML = '';
+  els.timeTrack.querySelectorAll('.ps-track-cue').forEach((node) => node.remove());
+  const duration = state.duration || Math.max(...state.cues.map((cue) => cue.end), 0) || 0;
+  const marks = duration > 0 ? Math.min(8, Math.max(3, Math.ceil(duration / 45))) : 0;
+  for (let i = 0; i <= marks; i += 1) {
+    const time = marks ? (duration * i) / marks : 0;
+    const mark = document.createElement('span');
+    mark.style.left = `${marks ? (i / marks) * 100 : 0}%`;
+    mark.textContent = formatClock(time);
+    els.trackRuler.append(mark);
+  }
+  state.cues.forEach((cue, index) => {
+    const block = document.createElement('button');
+    block.type = 'button';
+    block.className = 'ps-track-cue';
+    const left = duration ? (cue.start / duration) * 100 : 0;
+    const width = duration ? Math.max(0.4, ((cue.end - cue.start) / duration) * 100) : 0;
+    block.style.left = `${Math.max(0, Math.min(100, left))}%`;
+    block.style.width = `${Math.max(0.4, Math.min(100 - left, width))}%`;
+    block.title = `${formatClock(cue.start)} - ${cue.text}`;
+    block.addEventListener('click', () => seekToCue(index, true));
+    els.timeTrack.append(block);
+  });
+}
+
+function updateCueSelection(index) {
+  state.selectedCueIndex = index;
+  state.cueRows.forEach((row, i) => row.classList.toggle('ps-is-selected', i === index));
+  const cue = state.cues[index];
+  els.selectedCueLabel.textContent = cue ? `#${index + 1}` : 'Aucune';
+  els.startInput.disabled = !cue;
+  els.endInput.disabled = !cue;
+  els.cueAdjustButtons.forEach((button) => { button.disabled = !cue; });
+  if (cue) {
+    els.startInput.value = cue.start.toFixed(2);
+    els.endInput.value = cue.end.toFixed(2);
+  } else {
+    els.startInput.value = '';
+    els.endInput.value = '';
+  }
+}
+
+function retimeWords(cue, newStart, newEnd) {
+  const oldStart = cue.start;
+  const oldEnd = cue.end;
+  const oldDuration = Math.max(0.001, oldEnd - oldStart);
+  const newDuration = Math.max(0.001, newEnd - newStart);
+  cue.words = (cue.words?.length ? cue.words : spreadCueWords(cue.text, oldStart, oldEnd)).map((word) => ({
+    ...word,
+    start: newStart + (((word.start ?? oldStart) - oldStart) / oldDuration) * newDuration,
+    end: newStart + (((word.end ?? oldEnd) - oldStart) / oldDuration) * newDuration,
+  }));
+}
+
+function applyCueTimes(index, start, end) {
+  const cue = state.cues[index];
+  if (!cue) return;
+  const minDur = Math.max(MIN_CUE_DURATION, cue.text.length / CPS_MAX);
+  const safeStart = Math.max(0, Number(start));
+  const safeEnd = Math.max(safeStart + minDur, Number(end));
+  retimeWords(cue, safeStart, safeEnd);
+  cue.start = safeStart;
+  cue.end = safeEnd;
+  state.cues.sort((a, b) => a.start - b.start);
+  state.cues.forEach((item, i) => { item.id = i + 1; });
+  const newIndex = state.cues.indexOf(cue);
+  renderCueList();
+  renderTrack();
+  updateCueSelection(newIndex);
+  state.activeCueIndex = -1;
+  requestRenderFrame();
+}
+
+function adjustSelectedCue(kind, delta) {
+  const cue = state.cues[state.selectedCueIndex];
+  if (!cue) return;
+  let start = cue.start;
+  let end = cue.end;
+  if (kind === 'start') start += delta;
+  if (kind === 'end') end += delta;
+  if (kind === 'cue') { start += delta; end += delta; }
+  applyCueTimes(state.selectedCueIndex, start, end);
+}
+
+function seekToCue(index, play = false) {
+  const cue = state.cues[index];
+  if (!cue || !state.audioUrl) return;
+  updateCueSelection(index);
+  els.audioEl.currentTime = Math.max(0, cue.start + 0.01);
+  requestRenderFrame();
+  if (play) els.audioEl.play().catch(() => {});
+}
+
+async function resolveRuntime() {
   let runtime = els.runtimeSelect.value;
   if (runtime === 'auto') runtime = 'wasm';
   if (runtime === 'webgpu') {
     const ok = await webgpuPreflight();
     if (!ok) {
-      setStatus('WebGPU détecté mais non utilisable ici. Bascule WASM CPU stable.', 5, 'PAXLAB Subs privilégie le runtime fiable. WebGPU reste expérimental selon navigateur/GPU/driver.');
+      setStatus('WebGPU non utilisable ici. Bascule WASM CPU.', 5, 'Runtime fiable conservé. WebGPU reste expérimental.');
       runtime = 'wasm';
     }
   }
+  return runtime;
+}
 
-  const key = `${model}::${runtime}`;
-  if (state.transcriberCache.has(key)) return state.transcriberCache.get(key);
-
-  const modelLabel = whisperModelShortLabel(model);
-  const runtimeLabel = runtimeShortLabel(runtime);
-  if (els.engineModelText) els.engineModelText.textContent = modelLabel;
-  if (els.engineRuntimeText) els.engineRuntimeText.textContent = runtimeLabel;
-  setStatus(`Chargement ${modelLabel} (${runtimeLabel})...`, 3, runtime === 'wasm' ? 'Runtime stable WASM CPU. Plus lent mais fiable.' : 'Runtime WebGPU expérimental. Bascule possible vers WASM si non utilisable.');
-  setPhase('chargement moteur', 3, 'Modèle chargé depuis le cache navigateur si déjà disponible, sinon téléchargement.');
-  if (els.engineText) els.engineText.textContent = `Engine: ${modelLabel} / ${runtimeLabel}`;
-  const { pipeline, env } = await import(TRANSFORMERS_CDN);
-  env.allowLocalModels = false;
-  env.useBrowserCache = true;
-
-  const options = {
-    device: runtime,
-    progress_callback: (data) => {
-      if (data?.status === 'progress' && Number.isFinite(data.progress)) {
-        setStatus(`Téléchargement modèle: ${data.file || 'model'} ${Math.round(data.progress)}%`, Math.max(5, Math.min(45, data.progress * 0.45)), 'Téléchargement modèle en cours. Cette étape est mise en cache par le navigateur.');
-      } else if (data?.status) {
-        setStatus(`Moteur ASR: ${data.status}`, null, 'Initialisation moteur ASR.');
-      }
-    },
-  };
-
-  const transcriber = await pipeline('automatic-speech-recognition', model, options);
-  state.transcriberCache.set(key, transcriber);
-  setStatus('Moteur ASR chargé. Analyse audio...', 48, 'Le modèle est prêt. Lancement de la transcription française par chunks courts.');
-  setPhase('moteur prêt', 48, `Le modèle est chargé en ${runtime}.`);
-  return transcriber;
+function createWorker() {
+  if (!canUseModuleWorker()) throw new Error('Worker module indisponible dans ce navigateur.');
+  return new Worker('./src/asr.worker.js', { type: 'module' });
 }
 
 async function generateAutoCaptions() {
   if (state.running) return;
-  if (!state.audioFile || !state.audioUrl) {
-    setStatus('Ajoute d’abord un MP3 ou WAV.', 0);
-    return;
-  }
+  if (!state.audioFile) { setStatus('Ajoute d’abord un MP3 ou WAV.', 0); return; }
   const lines = splitCleanLyrics(els.lyricsInput.value);
-  if (!lines.length) {
-    setStatus('Colle les paroles propres avant de générer.', 0);
-    return;
-  }
+  if (!lines.length) { setStatus('Colle les paroles propres avant de générer.', 0); return; }
 
   state.running = true;
-  state.cancelRequested = false;
-  setLiveMetrics();
+  state.asrWords = [];
+  state.transcript = '';
+  state.cues = [];
+  state.activeCueIndex = -1;
+  state.activeWordIndex = -1;
+  renderCueList();
+  renderTrack();
+  setMetrics();
+  updateEngineSummary();
   els.generateBtn.disabled = true;
-  if (els.stopBtn) els.stopBtn.disabled = false;
-  els.generateBtn.textContent = `Génération - ${whisperModelShortLabel().replace(' FR', '')}...`;
+  els.stopBtn.disabled = false;
+  els.generateBtn.textContent = `Génération - ${modelLabel()}...`;
+  startElapsedTimer();
 
   try {
-    const transcriber = await getTranscriber();
-    const language = els.languageSelect.value === 'auto' ? undefined : els.languageSelect.value || PAXLAB_LANGUAGE;
-    const started = performance.now();
+    setStatus('Préparation audio 16 kHz mono...', 8, 'Décodage local puis transfert zero-copy vers le Worker ASR.');
+    setPhase('préparation audio');
+    const pcm = await decodeAudioToMono16k(state.audioFile);
+    els.seekBar.disabled = false;
+    els.timeDisplay.textContent = `0:00 / ${formatClock(state.duration)}`;
 
-    setStatus('Préparation audio pour transcription progressive...', 49, 'Décodage local, conversion mono 16 kHz, puis analyse par segments courts de 12s.');
-    setPhase('préparation audio', 49, 'Préparation du buffer audio local.');
-    startProgressHeartbeat('préparation audio', 49, 54, 'Décodage local en cours.');
-    const audioData = await decodeAudioToMono16k(state.audioFile);
-    const chunks = buildChunkPlan(state.duration || (audioData.length / ASR_SAMPLE_RATE));
-    stopProgressHeartbeat();
+    const runtime = await resolveRuntime();
+    const language = els.languageSelect.value === 'auto' ? undefined : (els.languageSelect.value || 'french');
+    state.worker = createWorker();
+    const progressId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-    state.asrWords = [];
-    state.transcript = '';
-    state.progressiveCues = [];
-    state.cues = [];
-    refreshOutputs(true);
+    state.worker.onmessage = (event) => {
+      const msg = event.data || {};
+      if (msg.progressId && msg.progressId !== progressId) return;
+      if (msg.type === 'status') {
+        setStatus(msg.text || 'Worker ASR...', null, 'Transcription via Worker. L’interface reste utilisable.');
+      } else if (msg.type === 'progress') {
+        setProgress(msg.pct);
+        setPhase(msg.phase || 'asr');
+      } else if (msg.type === 'partial') {
+        if (msg.text && !state.transcript.includes(msg.text)) {
+          state.transcript = `${state.transcript}${state.transcript ? ' ' : ''}${msg.text}`.trim();
+          els.transcriptOutput.value = state.transcript;
+        }
+      } else if (msg.type === 'done') {
+        onWorkerDone(msg.words || [], msg.text || '', lines);
+      } else if (msg.type === 'error') {
+        throwWorkerError(msg.message || 'Erreur worker inconnue.');
+      }
+    };
 
-    for (let i = 0; i < chunks.length; i += 1) {
-      if (state.cancelRequested) throw new Error('Génération interrompue par l’utilisateur.');
-      const chunk = chunks[i];
-      if (els.chunkText) els.chunkText.textContent = `Chunk: ${i + 1}/${chunks.length}`;
-      const pctStart = 54 + Math.round((i / Math.max(1, chunks.length)) * 34);
-      setStatus(`Transcription française ${i + 1}/${chunks.length} - ${formatClock(chunk.start)} à ${formatClock(chunk.end)}...`, pctStart, 'Chaque segment terminé ajoute des cues dans la timeline.');
-      startProgressHeartbeat(`chunk ${i + 1}/${chunks.length}`, pctStart, Math.min(88, pctStart + 8), `Analyse ${formatClock(chunk.start)} -> ${formatClock(chunk.end)}.`);
+    state.worker.onerror = (error) => {
+      throwWorkerError(error.message || 'Erreur worker ASR.');
+    };
 
-      const audioChunk = sliceAudio(audioData, chunk.start, chunk.end);
-      const output = await transcriber(audioChunk, {
-        language,
-        task: 'transcribe',
-        return_timestamps: 'word',
-      });
-      stopProgressHeartbeat();
-
-      if (state.cancelRequested) throw new Error('Génération interrompue par l’utilisateur.');
-      const newWords = extractAsrWords(output, chunk.start);
-      state.asrWords = dedupeAsrWords(state.asrWords.concat(newWords));
-      state.transcript += `${state.transcript ? '\n' : ''}[${formatClock(chunk.start)} - ${formatClock(chunk.end)}] ${String(output?.text || '').trim()}`;
-      updateProgressiveCues(lines, state.asrWords, i + 1, chunks.length);
-      await new Promise((resolve) => setTimeout(resolve, 35));
-    }
-
-    const asrWords = state.asrWords;
-    state.wordCount = asrWords.length;
-
-    if (!asrWords.length) {
-      throw new Error('Le moteur ASR n’a pas renvoyé de timestamps mot par mot. Essaie le modèle Quality ou un navigateur Chromium/WebGPU.');
-    }
-
-    setStatus(`Consolidation finale avec les paroles propres (${asrWords.length} mots détectés)...`, 91, 'Conservation du texte exact collé, alignement uniquement sur les timestamps.');
-    setPhase('alignement final', 93, `${asrWords.length} mots détectés par le moteur ASR.`);
-    const lyricWords = flattenLyrics(lines);
-    const aligned = alignWords(lyricWords, asrWords);
-    state.cues = buildCuesFromAlignment(lines, aligned, state.duration);
-
-    const elapsed = ((performance.now() - started) / 1000).toFixed(1);
-    setStatus(`Captions générées automatiquement en ${elapsed}s.`, 100, 'SRT, VTT et JSON prêts à exporter.');
-    setPhase('terminé', 100, 'Prévisualisation et exports disponibles.');
-    refreshOutputs(false);
+    setStatus('Transcription française en Worker...', 58, 'Un seul appel Whisper avec chunking natif 30s / stride 5s.');
+    setPhase('worker asr');
+    state.worker.postMessage({
+      type: 'run',
+      pcm,
+      sampleRate: ASR_SAMPLE_RATE,
+      model: els.modelSelect.value,
+      device: runtime,
+      language,
+      progressId,
+    }, [pcm.buffer]);
   } catch (error) {
-    console.error(error);
-    stopProgressHeartbeat();
-    setPhase('erreur', 0, 'Le moteur auto a échoué ou a été interrompu.');
-    setStatus(`Erreur auto: ${error.message || error}`, 0);
-  } finally {
-    stopProgressHeartbeat();
-    state.running = false;
-    els.generateBtn.disabled = false;
-    if (els.stopBtn) els.stopBtn.disabled = true;
-    updateEngineSummary();
-    setLiveMetrics();
+    finishGeneration(false, error.message || String(error));
   }
 }
 
-function refreshOutputs(isPartial = false) {
-  els.previewCard.hidden = false;
-  els.resultsGrid.hidden = false;
-  els.seekBar.disabled = state.duration <= 0;
-  els.playBtn.disabled = !state.audioUrl;
+function throwWorkerError(message) {
+  finishGeneration(false, message);
+}
+
+function onWorkerDone(words, text, lines) {
+  state.asrWords = words;
+  state.transcript = text;
+  els.transcriptOutput.value = text;
+  setMetrics();
+  setStatus(`Alignement global avec les paroles propres (${words.length} mots ASR)...`, 90, 'Needleman-Wunsch global, texte exporté inchangé.');
+  setPhase('alignement global');
+  if (!words.length) {
+    finishGeneration(false, 'Aucun timestamp mot renvoyé par Whisper. Essaie un autre modèle ou runtime.');
+    return;
+  }
+  try {
+    state.cues = buildCuesFromLyricsAndAsr(lines, words, state.duration);
+    setProgress(100);
+    setStatus(`Captions générées: ${state.cues.length} cues, ${words.length} mots ASR.`, 100, 'SRT, VTT et JSON prêts. Ajustements immédiats disponibles.');
+    setPhase('terminé');
+    renderCueList();
+    renderTrack();
+    updateCueSelection(-1);
+    requestRenderFrame();
+    finishGeneration(true);
+  } catch (error) {
+    finishGeneration(false, error.message || String(error));
+  }
+}
+
+function stopGeneration() {
+  if (state.worker) {
+    state.worker.terminate();
+    state.worker = null;
+  }
+  if (state.running) finishGeneration(false, 'Génération interrompue.');
+}
+
+function finishGeneration(success, error = '') {
+  if (state.worker) {
+    state.worker.terminate();
+    state.worker = null;
+  }
+  state.running = false;
+  stopElapsedTimer();
+  els.generateBtn.disabled = false;
+  els.stopBtn.disabled = true;
   els.downloadSrtBtn.disabled = state.cues.length === 0;
   els.downloadVttBtn.disabled = state.cues.length === 0;
   els.downloadJsonBtn.disabled = state.cues.length === 0;
-  els.transcriptOutput.value = state.transcript;
-  els.asrCount.textContent = `${state.wordCount} words${isPartial ? ' live' : ''}`;
-  els.previewLanguage.textContent = `Langue: ${els.languageSelect.value === 'auto' ? 'Auto' : 'Français'}`;
-  renderCueList();
-  setLiveMetrics();
+  if (!success && error) {
+    setStatus(`Erreur: ${error}`, 0, 'Tu peux relancer avec un autre modèle/runtime.');
+    setPhase('erreur');
+  }
+  updateEngineSummary();
+  setMetrics();
 }
-
 
 function cuesToSrt(cues) {
   return cues.map((cue, index) => `${index + 1}\n${formatSrtTime(cue.start)} --> ${formatSrtTime(cue.end)}\n${cue.text}`).join('\n\n') + '\n';
@@ -913,10 +664,13 @@ function cuesToVtt(cues) {
 function cuesToJson(cues) {
   return JSON.stringify({
     app: 'PAXLAB Subs',
-    version: 'dev2-6-model-selector',
+    version: APP_VERSION,
     language: els.languageSelect.value === 'auto' ? 'auto' : 'fr-FR',
     model: els.modelSelect.value,
+    runtime: els.runtimeSelect.value,
     sourceAudio: state.audioFile?.name || null,
+    duration: state.duration,
+    asrWords: state.asrWords.length,
     cues,
   }, null, 2);
 }
@@ -927,7 +681,7 @@ function downloadText(filename, content, type) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
-  document.body.appendChild(a);
+  document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 800);
@@ -938,118 +692,73 @@ function baseName() {
   return name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9-_]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'paxlab-subs';
 }
 
-function setAudioFile(file) {
-  if (!file) return;
-  if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-  state.audioFile = file;
-  state.audioUrl = URL.createObjectURL(file);
-  state.duration = 0;
-  els.audioEl.src = state.audioUrl;
-  els.audioDropTitle.textContent = file.name;
-  els.audioMeta.textContent = `${formatBytes(file.size)} - local only`;
-  setStatus('Audio chargé. En attente des paroles propres.', 0, 'Colle les paroles propres, puis lance Generate Lyrics.');
-  setPhase('audio prêt', 0, 'Audio local chargé.');
-}
-
-function resetApp() {
-  if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-  state.audioFile = null;
-  state.audioUrl = '';
-  state.duration = 0;
-  state.cues = [];
-  state.activeCueIndex = -1;
-  state.selectedCueIndex = -1;
-  state.wordCount = 0;
-  state.transcript = '';
-  state.asrWords = [];
-  state.progressiveCues = [];
-  state.cancelRequested = false;
-  if (els.chunkText) els.chunkText.textContent = 'Chunk: idle';
-  setLiveMetrics();
-  els.audioInput.value = '';
-  els.audioEl.removeAttribute('src');
-  els.audioEl.load();
-  els.lyricsInput.value = '';
-  els.audioDropTitle.textContent = 'Glisse un MP3/WAV ici ou clique pour choisir';
-  els.audioMeta.textContent = 'Traitement local - aucun upload';
-  els.previewCard.hidden = false;
-  els.resultsGrid.hidden = false;
-  els.cueList.innerHTML = '';
-  updateSelectedCueUi();
-  els.transcriptOutput.value = '';
-  els.seekBar.value = '0';
-  els.playBtn.disabled = true;
-  els.downloadSrtBtn.disabled = true;
-  els.downloadVttBtn.disabled = true;
-  els.downloadJsonBtn.disabled = true;
-  setStatus('Ready. Audio + lyrics required.', 0, 'Les cues apparaissent progressivement pendant la transcription par segments.');
-  setPhase('idle', 0, 'Les cues apparaissent progressivement pendant la transcription par segments.');
-  if (els.elapsedText) els.elapsedText.textContent = 'Elapsed: 0s';
-  updateEngineSummary();
-}
-
-
 function bindEvents() {
   els.audioInput.addEventListener('change', (event) => setAudioFile(event.target.files?.[0]));
-
-  ['dragenter', 'dragover'].forEach((name) => {
-    els.dropZone.addEventListener(name, (event) => {
-      event.preventDefault();
-      els.dropZone.classList.add('is-dragging');
-    });
-  });
-  ['dragleave', 'drop'].forEach((name) => {
-    els.dropZone.addEventListener(name, (event) => {
-      event.preventDefault();
-      els.dropZone.classList.remove('is-dragging');
-    });
-  });
+  ['dragenter', 'dragover'].forEach((name) => els.dropZone.addEventListener(name, (event) => {
+    event.preventDefault();
+    els.dropZone.classList.add('ps-is-drag');
+  }));
+  ['dragleave', 'drop'].forEach((name) => els.dropZone.addEventListener(name, (event) => {
+    event.preventDefault();
+    els.dropZone.classList.remove('ps-is-drag');
+  }));
   els.dropZone.addEventListener('drop', (event) => setAudioFile(event.dataTransfer?.files?.[0]));
 
   els.audioEl.addEventListener('loadedmetadata', () => {
-    state.duration = els.audioEl.duration || 0;
+    state.duration = els.audioEl.duration || state.duration;
     els.timeDisplay.textContent = `0:00 / ${formatClock(state.duration)}`;
-    setStatus(`Audio prêt: ${formatClock(state.duration)}.`, 0, 'Durée audio détectée.');
+    els.seekBar.disabled = false;
+    setStatus(`Audio prêt: ${formatClock(state.duration)}.`, 0, 'Colle les paroles propres puis génère.');
   });
-  els.audioEl.addEventListener('play', () => { els.playerToggle.textContent = '⏸'; els.playBtn.textContent = 'Pause preview'; });
-  els.audioEl.addEventListener('pause', () => { els.playerToggle.textContent = '▶'; els.playBtn.textContent = 'Play preview'; });
+  els.audioEl.addEventListener('play', () => { els.playerToggle.textContent = 'Ⅱ'; requestRenderFrame(); });
+  els.audioEl.addEventListener('pause', () => { els.playerToggle.textContent = '▶'; requestRenderFrame(); });
+  els.audioEl.addEventListener('timeupdate', requestRenderFrame);
+  els.audioEl.addEventListener('seeked', requestRenderFrame);
 
-  els.generateBtn.addEventListener('click', generateAutoCaptions);
-  els.modelSelect.addEventListener('change', () => {
-    updateEngineSummary();
-    setStatus(`Modèle sélectionné: ${selectedOptionLabel(els.modelSelect)}.`, 0, 'Relance la génération pour utiliser ce modèle Whisper.');
-  });
-  els.runtimeSelect.addEventListener('change', () => {
-    updateEngineSummary();
-    setStatus(`Runtime sélectionné: ${selectedOptionLabel(els.runtimeSelect)}.`, 0, 'WASM CPU reste le profil stable. WebGPU est conservé en labo.');
-  });
-  els.playBtn.addEventListener('click', () => els.audioEl.paused ? els.audioEl.play().catch(() => {}) : els.audioEl.pause());
-  els.playerToggle.addEventListener('click', () => els.audioEl.paused ? els.audioEl.play().catch(() => {}) : els.audioEl.pause());
   els.seekBar.addEventListener('input', () => {
-    if (state.duration > 0) els.audioEl.currentTime = (Number(els.seekBar.value) / 1000) * state.duration;
+    if (!state.duration) return;
+    els.audioEl.currentTime = (Number(els.seekBar.value) / 1000) * state.duration;
+    requestRenderFrame();
   });
+  els.playerToggle.addEventListener('click', () => {
+    if (!state.audioUrl) return;
+    if (els.audioEl.paused) els.audioEl.play().catch(() => {});
+    else els.audioEl.pause();
+  });
+  els.playBtn.addEventListener('click', () => els.playerToggle.click());
+  els.generateBtn.addEventListener('click', generateAutoCaptions);
+  els.stopBtn.addEventListener('click', stopGeneration);
   els.resetBtn.addEventListener('click', resetApp);
-  if (els.stopBtn) els.stopBtn.addEventListener('click', () => {
-    state.cancelRequested = true;
-    setStatus('Arrêt demandé. Le chunk en cours doit finir avant interruption.', null, 'Le moteur ASR ne peut pas toujours être stoppé instantanément pendant un chunk.');
-  });
-  if (els.testRuntimeBtn) els.testRuntimeBtn.addEventListener('click', async () => {
-    if (els.runtimeSelect.value === 'webgpu') {
+  els.testRuntimeBtn.addEventListener('click', async () => {
+    const runtime = els.runtimeSelect.value;
+    if (runtime === 'webgpu') {
       const ok = await webgpuPreflight();
-      setStatus(ok ? 'WebGPU préflight OK.' : 'WebGPU indisponible ou bloqué. WASM recommandé.', ok ? 8 : 0, ok ? 'WebGPU peut être tenté, mais WASM reste le profil stable.' : 'Utilise Stable - WASM CPU pour ce navigateur.');
+      setStatus(ok ? 'WebGPU préflight OK.' : 'WebGPU non utilisable ici.', ok ? 10 : 0, ok ? 'Tu peux tester WebGPU, mais WASM reste le défaut stable.' : 'Garde WASM CPU stable.');
     } else {
-      setStatus('Runtime WASM CPU stable sélectionné.', 0, 'Profil recommandé pour éviter les blocages WebGPU.');
+      setStatus(`Runtime ${runtimeLabel()} prêt. Cross-origin isolated: ${self.crossOriginIsolated ? 'oui' : 'non'}.`, 0, 'Sur Cloudflare, _headers DEV2.9 tente d’activer COEP credentialless.');
     }
   });
+  els.modelSelect.addEventListener('change', updateEngineSummary);
+  els.runtimeSelect.addEventListener('change', updateEngineSummary);
+
+  els.cueAdjustButtons.forEach((button) => button.addEventListener('click', () => {
+    adjustSelectedCue(button.dataset.psAdjust, Number(button.dataset.psDelta));
+  }));
+  els.startInput.addEventListener('change', () => {
+    const cue = state.cues[state.selectedCueIndex];
+    if (cue) applyCueTimes(state.selectedCueIndex, Number(els.startInput.value), cue.end);
+  });
+  els.endInput.addEventListener('change', () => {
+    const cue = state.cues[state.selectedCueIndex];
+    if (cue) applyCueTimes(state.selectedCueIndex, cue.start, Number(els.endInput.value));
+  });
+
   els.downloadSrtBtn.addEventListener('click', () => downloadText(`${baseName()}.srt`, cuesToSrt(state.cues), 'text/plain;charset=utf-8'));
   els.downloadVttBtn.addEventListener('click', () => downloadText(`${baseName()}.vtt`, cuesToVtt(state.cues), 'text/vtt;charset=utf-8'));
   els.downloadJsonBtn.addEventListener('click', () => downloadText(`${baseName()}.json`, cuesToJson(state.cues), 'application/json;charset=utf-8'));
-  els.cueAdjustButtons.forEach((button) => {
-    button.addEventListener('click', () => adjustSelectedCue(button.dataset.psAdjust, Number(button.dataset.psDelta)));
-    button.disabled = true;
-  });
 }
 
 bindEvents();
 updateEngineSummary();
-requestAnimationFrame(updatePreview);
+setMetrics();
+requestRenderFrame();

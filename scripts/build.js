@@ -1,10 +1,9 @@
-import { cpSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { cp, mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 
-const root = process.cwd();
-const dist = join(root, 'dist');
-rmSync(dist, { recursive: true, force: true });
-mkdirSync(dist, { recursive: true });
-cpSync(join(root, 'index.html'), join(dist, 'index.html'));
-cpSync(join(root, 'src'), join(dist, 'src'), { recursive: true });
-console.log('PAXLAB Subs DEV2.7 build OK - static dist generated.');
+await rm('dist', { recursive: true, force: true });
+await mkdir('dist', { recursive: true });
+await cp('index.html', 'dist/index.html');
+await cp('src', 'dist/src', { recursive: true });
+if (existsSync('_headers')) await cp('_headers', 'dist/_headers');
+console.log('PAXLAB Subs build complete -> dist');

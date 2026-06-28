@@ -1,11 +1,14 @@
 # Changelog
 
-## DEV2.7 - UI rebuild and visible model selector
+## DEV2.9 - ASR worker and global alignment
 
-- Rebuild UI PAXLAB dark/champagne.
-- Model selector moved into a clearly visible settings area.
-- Runtime selector kept visible and separate from model choice.
-- Engine live panel rebuilt to avoid overlap.
-- Workspace tuned for one-screen 1920x1080 usage.
-- Responsive stack preserved for smaller screens.
-- Current ASR logic from DEV2.6 preserved.
+- Refactor majeur du pipeline ASR.
+- Ajout de `src/asr.worker.js` pour exécuter Whisper hors du thread UI.
+- Suppression du découpage maison 12 s et passage à un seul appel Whisper avec `chunk_length_s: 30` et `stride_length_s: 5`.
+- Ajout d'un alignement global Needleman-Wunsch pour mieux gérer erreurs ASR, mots parasites et refrains répétés.
+- Ajout de contraintes CPS pour améliorer la lisibilité des sous-titres.
+- Décodage audio par `OfflineAudioContext` en mono 16 kHz.
+- Ajout d'une piste temporelle légère et d'une édition directe des bornes start/end.
+- Simplification du surlignage mot actif et correction durable des espaces en preview.
+- Ajout `_headers` Cloudflare avec COOP/COEP credentialless.
+- Ajout `tests/align.test.mjs`.

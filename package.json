@@ -1,9 +1,10 @@
 {
   "name": "paxlab-subs",
-  "version": "0.2.7-dev2-ui-rebuild",
+  "version": "2.9.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "test": "node tests/align.test.mjs"
   }
 }
