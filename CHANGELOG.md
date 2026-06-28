@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## DEV2.11.8 - Polish PAXLAB UI layout
+
+- Passe UI/UX uniquement, sans changement moteur.
+- Refonte en trois zones : Source, Preview, Timeline.
+- Déplacement des paroles dans la zone Source pour réduire le bazar visuel.
+- Réglages avancés, moteur et diagnostics repliés dans un panneau dédié.
+- Boutons d'action importants retravaillés avec effet 3D champagne façon PAXLAB.
+- Alignements, hauteurs, espacements et scrolling interne resserrés.
+- Version visible, README et package mis à jour en DEV2.11.8.
+
 ## DEV2.11.7 - Conservative gap repair baseline
 
 - Base fonctionnelle reprise depuis `paxlab-subs-dev2-11-5-auto-ctc.zip`.
