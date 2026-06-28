@@ -58,7 +58,6 @@ const els = {
   guideToggle: $('psGuideToggle'),
   onsetToggle: $('psOnsetToggle'),
   forcedAlignToggle: $('psForcedAlignToggle'),
-  ctcModelInput: $('psCtcModelInput'),
   lyricsInput: $('psLyricsInput'),
   generateBtn: $('psGenerateBtn'),
   stopBtn: $('psStopBtn'),
@@ -807,9 +806,8 @@ function startForcedAlignment(lines) {
   state.pcm16kForAlign = null;
   const language = els.languageSelect.value === 'auto' ? 'french' : (els.languageSelect.value || 'french');
   const runtime = els.runtimeSelect.value === 'webgpu' ? 'webgpu' : 'wasm';
-  const ctcModelId = String(els.ctcModelInput?.value || '').trim();
-  mergeCtcDiagnostic({ status: 'CTC lancement', modelId: ctcModelId || 'auto q8', segments: segments.length, requestedWords: segments.reduce((sum, segment) => sum + (segment.words?.length || 0), 0) });
-  setStatus(`Alignement forcé CTC (${segments.length} segments)...`, 92, 'Téléchargement éventuel du modèle d'alignement (~90 Mo, une seule fois). Texte exporté inchangé.');
+  mergeCtcDiagnostic({ status: 'CTC lancement', segments: segments.length, requestedWords: segments.reduce((sum, segment) => sum + (segment.words?.length || 0), 0) });
+  setStatus(`Alignement forcé CTC (${segments.length} segments)...`, 92, 'Option précision max: wav2vec2 CTC sur les paroles connues.');
   setPhase('forced alignment');
   try {
     state.alignWorker = createAlignWorker();
@@ -841,7 +839,6 @@ function startForcedAlignment(lines) {
       sampleRate: ASR_SAMPLE_RATE,
       language,
       segments,
-      modelId: ctcModelId,
       device: runtime,
     }, [alignPcm.buffer]);
     alignPcm = null;
