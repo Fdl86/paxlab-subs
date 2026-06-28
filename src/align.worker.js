@@ -1,4 +1,5 @@
 import { aggregateTokenPathToWords, ctcTrellisAlign, logSoftmaxRows } from './forced-align.js';
+import { buildTokenIds } from './ctc-tokens.js';
 
 const TRANSFORMERS_URLS = [
   'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2',
@@ -18,20 +19,6 @@ function post(type, payload = {}) { self.postMessage({ type, ...payload }); }
 function diagnostic(payload = {}) { post('diagnostic', payload); }
 function countSegmentWords(segments = []) { return segments.reduce((sum, segment) => sum + ((segment.words || []).filter((word) => word?.norm).length), 0); }
 
-function normalizeCtc(text) {
-  return String(text || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/œ/g, 'oe')
-    .replace(/æ/g, 'ae')
-    .replace(/[’‘`]/g, "'")
-    .replace(/'/g, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 async function importTransformers() {
   if (transformersModule) return transformersModule;
   let last = null;
@@ -40,7 +27,9 @@ async function importTransformers() {
       post('status', { text: `Chargement module CTC (${new URL(url).host})...` });
       transformersModule = await import(url);
       return transformersModule;
-    } catch (error) { last = error; }
+    } catch (error) {
+      last = error;
+    }
   }
   throw new Error(`Impossible de charger Transformers.js pour alignement forcé. ${last?.message || ''}`.trim());
 }
@@ -82,7 +71,7 @@ async function loadCtc(modelId, device) {
       tokenizerCache = tokenizer;
       processorCache = processor;
       cacheKey = key;
-      diagnostic({ status: 'CTC model loaded', modelId: candidate });
+      diagnostic({ status: 'CTC model loaded', modelId: candidate, processor: Boolean(processor), tokenizerModel: tokenizer?.model?.constructor?.name || 'unknown' });
       return { model, tokenizer, processor, modelId: candidate };
     } catch (error) {
       lastError = error;
@@ -93,70 +82,49 @@ async function loadCtc(modelId, device) {
   throw lastError || new Error('Impossible de charger un modèle CTC.');
 }
 
-function getVocab(tokenizer) {
-  const vocab = tokenizer?.vocab || tokenizer?.model?.vocab || (typeof tokenizer?.get_vocab === 'function' ? tokenizer.get_vocab() : null);
-  if (!vocab) throw new Error('Vocabulaire CTC inaccessible.');
-  return vocab;
-}
-
-function blankId(tokenizer, vocab) {
-  return tokenizer?.pad_token_id ?? tokenizer?.config?.pad_token_id ?? vocab['<pad>'] ?? vocab['[PAD]'] ?? 0;
-}
-
-function delimiterToken(tokenizer, vocab) {
-  const candidates = [tokenizer?.word_delimiter_token, '|', ' ', '<s>', '</s>'].filter(Boolean);
-  for (const c of candidates) if (Object.prototype.hasOwnProperty.call(vocab, c)) return c;
-  return null;
-}
-
-function tokenForChar(char, vocab, delimiter) {
-  if (char === ' ') return delimiter && Object.prototype.hasOwnProperty.call(vocab, delimiter) ? vocab[delimiter] : null;
-  const variants = [char, char.toUpperCase(), char.toLowerCase()];
-  for (const v of variants) if (Object.prototype.hasOwnProperty.call(vocab, v)) return vocab[v];
-  return null;
-}
-
-function buildTokenIds(words, tokenizer) {
-  const vocab = getVocab(tokenizer);
-  const delimiter = delimiterToken(tokenizer, vocab);
-  const tokenIds = [];
-  const tokenToWord = [];
-  words.forEach((word, wordIndex) => {
-    const text = normalizeCtc(word.text || word.norm || '');
-    if (!text) return;
-    if (tokenIds.length && delimiter) {
-      tokenIds.push(vocab[delimiter]);
-      tokenToWord.push(null);
-    }
-    for (const char of text.replace(/\s+/g, '')) {
-      const id = tokenForChar(char, vocab, delimiter);
-      if (id === null || id === undefined) continue;
-      tokenIds.push(id);
-      tokenToWord.push(wordIndex);
-    }
-  });
-  return { tokenIds, tokenToWord, blank: blankId(tokenizer, vocab) };
-}
-
 function slicePcm(pcm, sampleRate, start, end) {
   const a = Math.max(0, Math.floor(start * sampleRate));
   const b = Math.min(pcm.length, Math.ceil(end * sampleRate));
   return pcm.slice(a, b);
 }
 
+
+function normalizeInputPcm(inputPcm) {
+  let sum = 0;
+  for (let i = 0; i < inputPcm.length; i += 1) sum += inputPcm[i] || 0;
+  const mean = sum / Math.max(1, inputPcm.length);
+  let variance = 0;
+  for (let i = 0; i < inputPcm.length; i += 1) {
+    const d = (inputPcm[i] || 0) - mean;
+    variance += d * d;
+  }
+  const std = Math.sqrt(variance / Math.max(1, inputPcm.length)) || 1;
+  const out = new Float32Array(inputPcm.length);
+  for (let i = 0; i < inputPcm.length; i += 1) out[i] = ((inputPcm[i] || 0) - mean) / std;
+  return out;
+}
+
 async function runModel(model, processor, inputPcm, sampleRate) {
   if (processor) {
+    diagnostic({ status: 'CTC processor run', samples: inputPcm.length, sampleRate });
     const inputs = await processor(inputPcm, { sampling_rate: sampleRate });
     return model(inputs);
   }
-  return model({ input_values: inputPcm });
+
+  const Tensor = transformersModule?.Tensor;
+  if (!Tensor) throw new Error('Processor CTC indisponible et Tensor Transformers.js indisponible.');
+  diagnostic({ status: 'CTC processor missing - manual normalized tensor', samples: inputPcm.length, sampleRate });
+  const normalized = normalizeInputPcm(inputPcm);
+  const input_values = new Tensor('float32', normalized, [1, normalized.length]);
+  return model({ input_values });
 }
 
 function logitsFromOutput(output) {
-  const tensor = output?.logits || output?.last_hidden_state || output?.[0];
-  if (!tensor?.data || !tensor?.dims) throw new Error('Logits CTC non renvoyés par le modèle.');
+  const tensor = output?.logits;
+  if (!tensor?.data || !tensor?.dims) throw new Error('Logits CTC absents (modèle sans tête CTC ?)');
   return { data: tensor.data, dims: tensor.dims };
 }
+
 
 async function alignSegment(ctx, segment, pcm, sampleRate, index, total) {
   const start = Math.max(0, Number(segment.start) || 0);

@@ -1,11 +1,10 @@
-# CHANGELOG
+# Changelog
 
-## DEV2.11.1 - CTC diagnostics and timing source
+## DEV2.11.2 - repair CTC tokenizer path
 
-- Ajout d’un diagnostic CTC visible dans le panneau moteur.
-- Affichage du statut CTC, mots substitués, cues affectées, cues modifiées et delta moyen.
-- Badges ASR / CTC dans la liste des cues.
-- Export JSON enrichi avec `ctcStats` et `timingSource` par cue.
-- Alertes explicites si CTC charge mais ne substitue aucun timestamp.
-- Messages worker CTC enrichis : modèle chargé, segments, mots demandés, mots alignés, erreurs/fallback.
-- Non-régression du chemin ASR / Needleman-Wunsch quand le toggle CTC est désactivé.
+- Fixed CTC vocabulary extraction for Transformers.js tokenizers exposing `model.tokens_to_ids` as a Map.
+- Added `src/ctc-tokens.js` to share tokenizer to ids logic between worker and tests.
+- Added regression tests covering Map and array vocabularies.
+- Prevented raw unnormalized PCM inference when the CTC processor is unavailable by using a normalized Tensor fallback or failing explicitly.
+- Removed unsafe `last_hidden_state` fallback: forced alignment now requires real CTC logits.
+- Preserved DEV2.11.1 behavior when forced alignment is disabled.

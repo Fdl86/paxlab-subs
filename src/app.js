@@ -10,7 +10,7 @@ import {
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.11.1';
+const APP_VERSION = 'DEV2.11.2';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 

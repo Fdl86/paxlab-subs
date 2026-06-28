@@ -1,23 +1,23 @@
-# PAXLAB Subs - DEV2.11.1
+# PAXLAB Subs - DEV2.11.2
 
-Module statique local pour générer des sous-titres à partir d’un audio et de paroles propres.
+Module local de sous-titres automatiques PAXLAB.
 
-## DEV2.11.1
+## DEV2.11.2
 
-Cette build ne change pas le moteur principal : elle rend le forced alignment CTC observable.
+Correctif ciblé du module CTC : accès vocabulaire Transformers.js 3.5.2 réparé, tests tokenizer ajoutés, inférence CTC sécurisée avec processor ou tensor normalisé, et rejet explicite des sorties sans vrais logits CTC.
 
-À tester :
-
-1. Générer avec CTC désactivé pour vérifier le chemin ASR nominal.
-2. Générer avec CTC activé.
-3. Regarder le panneau Diagnostic CTC : statut, mots, cues, delta.
-4. Vérifier les badges `ASR` / `CTC` dans la timeline.
-5. Exporter le JSON pour lire `ctcStats` et `timingSource` par cue.
-
-Si CTC ON donne 0 différence, cette build doit indiquer si le problème vient du chargement modèle, de l’absence de mots alignés, ou de la substitution.
+Chemin nominal inchangé lorsque le toggle CTC est désactivé.
 
 ## Cloudflare Pages
 
-Build command : `npm run build`
-Output directory : `dist`
-Root directory : laisser vide.
+Build command:
+
+```text
+npm run build
+```
+
+Output directory:
+
+```text
+dist
+```

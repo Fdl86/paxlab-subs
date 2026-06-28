@@ -5,6 +5,7 @@ import {
   ctcTrellisAlign,
   logSoftmaxRows,
 } from '../src/forced-align.js';
+import { buildTokenIds, getVocab } from '../src/ctc-tokens.js';
 import {
   applyForcedAlignmentToCues,
   buildCuesFromLyricsAndAsr,
@@ -22,6 +23,43 @@ function asr(tokens, start = 0) {
     return word;
   });
 }
+
+
+{
+  const tokenizer = {
+    pad_token_id: 0,
+    word_delimiter_token: '|',
+    model: {
+      tokens_to_ids: new Map([
+        ['<pad>', 0], ['a', 1], ['b', 2], ['c', 3], ['d', 4], ['e', 5], ['f', 6], ['g', 7], ['h', 8], ['i', 9], ['j', 10], ['k', 11], ['l', 12], ['m', 13], ['n', 14], ['o', 15], ['p', 16], ['q', 17], ['r', 18], ['s', 19], ['t', 20], ['u', 21], ['v', 22], ['w', 23], ['x', 24], ['y', 25], ['z', 26], ['|', 27],
+      ]),
+    },
+  };
+  const vocab = getVocab(tokenizer);
+  assert.equal(vocab.a, 1);
+  assert.equal(vocab['|'], 27);
+  const built = buildTokenIds([{ text: 'ab' }, { text: 'cd' }], tokenizer);
+  assert.ok(built.tokenIds.length > 0);
+  assert.deepEqual(built.tokenIds, [1, 2, 27, 3, 4]);
+  assert.deepEqual(built.tokenToWord, [0, 0, null, 1, 1]);
+  assert.equal(built.blank, 0);
+  assert.equal(built.delimiter, 27);
+}
+
+{
+  const tokenizer = {
+    pad_token_id: 0,
+    word_delimiter_token: '|',
+    model: { vocab: ['<pad>', 'a', 'b', '|'] },
+  };
+  const vocab = getVocab(tokenizer);
+  assert.equal(vocab.a, 1);
+  assert.equal(vocab['|'], 3);
+  const built = buildTokenIds([{ text: 'a' }, { text: 'b' }], tokenizer);
+  assert.deepEqual(built.tokenIds, [1, 3, 2]);
+  assert.deepEqual(built.tokenToWord, [0, null, 1]);
+}
+
 
 {
   const frames = 12;
