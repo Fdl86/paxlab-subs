@@ -1,5 +1,11 @@
 # Changelog
 
+## DEV2.11.3 - switch CTC to French ONNX model
+
+- Replaced invalid `Xenova/wav2vec2-large-xlsr-53-french` CTC model id with `Poulpidot/wav2vec2-large-xlsr-53-french-onnx`.
+- Kept ASR fallback path unchanged if the French ONNX model fails to load or align.
+- Preserved DEV2.11.2 tokenizer, processor and logits safety fixes.
+
 ## DEV2.11.2 - repair CTC tokenizer path
 
 - Fixed CTC vocabulary extraction for Transformers.js tokenizers exposing `model.tokens_to_ids` as a Map.

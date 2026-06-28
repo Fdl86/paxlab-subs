@@ -7,7 +7,7 @@ const TRANSFORMERS_URLS = [
   'https://unpkg.com/@huggingface/transformers@3.5.2',
   'https://unpkg.com/@huggingface/transformers@3',
 ];
-const DEFAULT_MODEL_FR = 'Xenova/wav2vec2-large-xlsr-53-french';
+const DEFAULT_MODEL_FR = 'Poulpidot/wav2vec2-large-xlsr-53-french-onnx';
 const FALLBACK_MODEL = 'Xenova/wav2vec2-base-960h';
 let transformersModule = null;
 let modelCache = null;

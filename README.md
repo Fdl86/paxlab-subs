@@ -1,12 +1,12 @@
-# PAXLAB Subs - DEV2.11.2
+# PAXLAB Subs - DEV2.11.3
 
 Module local de sous-titres automatiques PAXLAB.
 
-## DEV2.11.2
+## DEV2.11.3
 
-Correctif ciblé du module CTC : accès vocabulaire Transformers.js 3.5.2 réparé, tests tokenizer ajoutés, inférence CTC sécurisée avec processor ou tensor normalisé, et rejet explicite des sorties sans vrais logits CTC.
+Correctif ciblé du modèle CTC français : remplacement du repo invalide `Xenova/wav2vec2-large-xlsr-53-french` par `Poulpidot/wav2vec2-large-xlsr-53-french-onnx`.
 
-Chemin nominal inchangé lorsque le toggle CTC est désactivé.
+Les correctifs DEV2.11.2 restent présents : vocab/tokenizer Transformers.js 3.5.2, processor sécurisé, rejet des sorties sans vrais logits CTC. Le chemin nominal reste inchangé lorsque le toggle CTC est désactivé.
 
 ## Cloudflare Pages
 
