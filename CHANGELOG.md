@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## DEV2.11.11 - Smooth timeline and active cue focus
+
+- Lissage visuel de la ligne de temps pendant la lecture avec horloge UI basée sur `requestAnimationFrame`.
+- Résolution de la barre de lecture augmentée pour réduire le jitter du marqueur.
+- Mise en avant renforcée de la cue active avec fond champagne premium.
+- Auto-scroll centré sur la cue active pour un suivi plus lisible.
+- Aucun changement moteur, modèle, détection ou export.
+
+
 ## DEV2.11.10 - Cue editing UX polish
 
 - Suppression de la box ASR visible pour alléger l'interface.

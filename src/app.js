@@ -11,7 +11,7 @@ import {
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.11.10';
+const APP_VERSION = 'DEV2.11.11';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -45,6 +45,8 @@ const state = {
   vocalOnsets: [],
   qualitySummary: { total: 0, ok: 0, info: 0, warn: 0, flags: 0 },
   renderRequested: false,
+  playbackAnchorTime: 0,
+  playbackAnchorPerf: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -474,14 +476,33 @@ function renderCueText(cue) {
   });
 }
 
+function syncPlaybackAnchor() {
+  state.playbackAnchorTime = els.audioEl.currentTime || 0;
+  state.playbackAnchorPerf = performance.now();
+}
+
+function smoothPlaybackTime() {
+  const audio = els.audioEl;
+  const actual = audio.currentTime || 0;
+  if (audio.paused || !state.playbackAnchorPerf) return actual;
+  const elapsed = Math.max(0, (performance.now() - state.playbackAnchorPerf) / 1000);
+  const predicted = state.playbackAnchorTime + elapsed;
+  const duration = state.duration || audio.duration || Infinity;
+  const drift = Math.abs(predicted - actual);
+  if (drift > 0.35) syncPlaybackAnchor();
+  return Math.max(0, Math.min(duration, drift > 0.35 ? actual : predicted));
+}
+
 function updatePreviewFrame() {
   state.renderRequested = false;
   const audio = els.audioEl;
-  const time = audio.currentTime || 0;
+  const time = smoothPlaybackTime();
   if (state.duration > 0) {
-    els.seekBar.value = String(Math.round((time / state.duration) * 1000));
+    const ratio = Math.max(0, Math.min(1, time / state.duration));
+    els.seekBar.value = String(Math.round(ratio * 100000));
     els.timeDisplay.textContent = `${formatCueTime(time)} / ${formatClock(state.duration)}`;
-    els.playhead.style.left = `${Math.max(0, Math.min(100, (time / state.duration) * 100))}%`;
+    els.playhead.style.left = `${(ratio * 100).toFixed(4)}%`;
+    els.seekBar.style.setProperty('--ps-range-progress', `${(ratio * 100).toFixed(3)}%`);
   }
 
   const cueIndex = activeCueAt(time);
@@ -490,7 +511,7 @@ function updatePreviewFrame() {
     state.activeCueIndex = cueIndex;
     if (state.cueRows[cueIndex]) {
       state.cueRows[cueIndex].classList.add('ps-is-active');
-      state.cueRows[cueIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      state.cueRows[cueIndex].scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
     const cue = state.cues[cueIndex];
     els.prevLine.textContent = cueIndex > 0 ? state.cues[cueIndex - 1].text : '';
@@ -586,7 +607,7 @@ function updateCueSelection(index) {
   state.selectedCueIndex = index;
   state.cueRows.forEach((row, i) => row.classList.toggle('ps-is-selected', i === index));
   const cue = state.cues[index];
-  if (cue && state.cueRows[index]) state.cueRows[index].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  if (cue && state.cueRows[index]) state.cueRows[index].scrollIntoView({ block: 'center', behavior: 'smooth' });
   els.selectedCueLabel.textContent = cue ? `#${index + 1}` : 'Aucune';
   els.startInput.disabled = !cue;
   els.endInput.disabled = !cue;
@@ -811,6 +832,8 @@ async function generateAutoCaptions() {
       setPhase('analyse attaques');
       state.vocalOnsets = vocalOnsets(pcm, ASR_SAMPLE_RATE);
     }
+    els.seekBar.max = '100000';
+    els.seekBar.step = '1';
     els.seekBar.disabled = false;
     els.timeDisplay.textContent = `00:00.00 / ${formatClock(state.duration)}`;
 
@@ -1094,17 +1117,21 @@ function bindEvents() {
   els.audioEl.addEventListener('loadedmetadata', () => {
     state.duration = els.audioEl.duration || state.duration;
     els.timeDisplay.textContent = `00:00.00 / ${formatClock(state.duration)}`;
+    els.seekBar.max = '100000';
+    els.seekBar.step = '1';
     els.seekBar.disabled = false;
+    syncPlaybackAnchor();
     setStatus(`Audio prêt: ${formatClock(state.duration)}.`, 0, 'Colle les paroles propres puis génère.');
   });
-  els.audioEl.addEventListener('play', () => { els.playBtn.textContent = 'Stop'; requestRenderFrame(); });
-  els.audioEl.addEventListener('pause', () => { els.playBtn.textContent = 'Play'; requestRenderFrame(); });
-  els.audioEl.addEventListener('timeupdate', requestRenderFrame);
-  els.audioEl.addEventListener('seeked', requestRenderFrame);
+  els.audioEl.addEventListener('play', () => { els.playBtn.textContent = 'Stop'; syncPlaybackAnchor(); requestRenderFrame(); });
+  els.audioEl.addEventListener('pause', () => { els.playBtn.textContent = 'Play'; syncPlaybackAnchor(); requestRenderFrame(); });
+  els.audioEl.addEventListener('timeupdate', () => { syncPlaybackAnchor(); requestRenderFrame(); });
+  els.audioEl.addEventListener('seeked', () => { syncPlaybackAnchor(); requestRenderFrame(); });
 
   els.seekBar.addEventListener('input', () => {
     if (!state.duration) return;
-    els.audioEl.currentTime = (Number(els.seekBar.value) / 1000) * state.duration;
+    els.audioEl.currentTime = (Number(els.seekBar.value) / 100000) * state.duration;
+    syncPlaybackAnchor();
     requestRenderFrame();
   });
   els.playBtn.addEventListener('click', () => {
