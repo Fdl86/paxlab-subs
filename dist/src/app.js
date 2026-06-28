@@ -10,7 +10,7 @@ import {
   spreadCueWords,
 } from './align.js';
 
-const APP_VERSION = 'DEV2.11';
+const APP_VERSION = 'DEV2.11.1';
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const ASR_SAMPLE_RATE = 16000;
 
@@ -35,6 +35,7 @@ const state = {
   alignWorker: null,
   pcm16kForAlign: null,
   forcedWords: [],
+  ctcStats: { status: 'OFF', modelId: '-', requestedWords: 0, alignedWords: 0, substitutedWords: 0, segments: 0, segmentsOk: 0, segmentsFailed: 0, cuesAffected: 0, cuesChanged: 0, avgShiftMs: 0, fallbackReason: '' },
   running: false,
   startedAt: 0,
   elapsedTimer: null,
@@ -71,6 +72,10 @@ const els = {
   engineModelText: $('psEngineModelText'),
   engineRuntimeText: $('psEngineRuntimeText'),
   progressHint: $('psProgressHint'),
+  ctcStatus: $('psCtcStatus'),
+  ctcWords: $('psCtcWords'),
+  ctcCues: $('psCtcCues'),
+  ctcShift: $('psCtcShift'),
   liveCueMetric: $('psLiveCueMetric'),
   liveWordMetric: $('psLiveWordMetric'),
   previewLanguage: $('psPreviewLanguage'),
@@ -97,6 +102,53 @@ const els = {
   downloadJsonBtn: $('psDownloadJsonBtn'),
   cueAdjustButtons: Array.from(document.querySelectorAll('[data-ps-adjust]')),
 };
+
+
+function resetCtcStats(status = 'OFF') {
+  state.ctcStats = {
+    status,
+    modelId: '-',
+    requestedWords: 0,
+    alignedWords: 0,
+    substitutedWords: 0,
+    segments: 0,
+    segmentsOk: 0,
+    segmentsFailed: 0,
+    cuesAffected: 0,
+    cuesChanged: 0,
+    avgShiftMs: 0,
+    fallbackReason: '',
+  };
+  updateCtcDiagnostics();
+}
+
+function updateCtcDiagnostics() {
+  if (!els.ctcStatus) return;
+  const stats = state.ctcStats || {};
+  const status = stats.fallbackReason ? `Fallback: ${stats.fallbackReason}` : (stats.status || 'OFF');
+  els.ctcStatus.textContent = status;
+  els.ctcWords.textContent = `${stats.substitutedWords || 0}/${stats.requestedWords || 0}`;
+  els.ctcCues.textContent = `${stats.cuesAffected || 0} CTC / ${stats.cuesChanged || 0} mod.`;
+  els.ctcShift.textContent = `${Math.round(stats.avgShiftMs || 0)} ms`;
+}
+
+function mergeCtcDiagnostic(diag = {}) {
+  const stats = state.ctcStats || {};
+  if (diag.status) stats.status = diag.status;
+  if (diag.modelId) stats.modelId = diag.modelId;
+  if (Number.isFinite(diag.requestedWords)) stats.requestedWords = diag.requestedWords;
+  if (Number.isFinite(diag.alignedWords)) stats.alignedWords = diag.alignedWords;
+  if (Number.isFinite(diag.substitutedWords)) stats.substitutedWords = diag.substitutedWords;
+  if (Number.isFinite(diag.cuesAffected)) stats.cuesAffected = diag.cuesAffected;
+  if (Number.isFinite(diag.cuesChanged)) stats.cuesChanged = diag.cuesChanged;
+  if (Number.isFinite(diag.avgShiftMs)) stats.avgShiftMs = diag.avgShiftMs;
+  if (Number.isFinite(diag.segments)) stats.segments = diag.segments;
+  if (Number.isFinite(diag.segmentsOk)) stats.segmentsOk = diag.segmentsOk;
+  if (Number.isFinite(diag.segmentsFailed)) stats.segmentsFailed = diag.segmentsFailed;
+  if (diag.fallbackReason) stats.fallbackReason = diag.fallbackReason;
+  state.ctcStats = stats;
+  updateCtcDiagnostics();
+}
 
 function modelLabel(value = els.modelSelect.value) {
   return MODEL_LABELS.get(value) || 'Whisper base';
@@ -287,6 +339,7 @@ function resetApp() {
     alignWorker: null,
     pcm16kForAlign: null,
     forcedWords: [],
+    ctcStats: { status: 'OFF', modelId: '-', requestedWords: 0, alignedWords: 0, substitutedWords: 0, segments: 0, segmentsOk: 0, segmentsFailed: 0, cuesAffected: 0, cuesChanged: 0, avgShiftMs: 0, fallbackReason: '' },
     running: false,
     startedAt: 0,
     transcript: '',
@@ -306,6 +359,7 @@ function resetApp() {
   els.transcriptOutput.value = '';
   setStatus('Audio + paroles requis.', 0, 'Worker ASR prêt. UI fluide pendant la transcription.');
   setPhase('idle');
+  resetCtcStats('OFF');
   updateCueSelection(-1);
   renderCueList();
   renderTrack();
@@ -415,7 +469,9 @@ function renderCueList() {
     row.type = 'button';
     row.className = 'ps-cue-row';
     row.dataset.index = String(index);
-    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><small>${formatClock(cue.end)}</small></span><span class="ps-cue-text"></span><span class="ps-cue-conf">${Math.round((cue.confidence || 0) * 100)}%</span>`;
+    const source = cue.timingSource === 'forced-ctc' ? 'CTC' : 'ASR';
+    row.classList.toggle('ps-cue-ctc', source === 'CTC');
+    row.innerHTML = `<span class="ps-cue-time"><b>${formatClock(cue.start)}</b><small>${formatClock(cue.end)}</small></span><span class="ps-cue-text"></span><span class="ps-cue-conf"><b>${source}</b><small>${Math.round((cue.confidence || 0) * 100)}%</small></span>`;
     row.querySelector('.ps-cue-text').textContent = cue.text;
     row.addEventListener('click', () => updateCueSelection(index));
     row.addEventListener('dblclick', () => seekToCue(index, true));
@@ -742,6 +798,7 @@ function onWorkerDone(words, text, lines) {
 function startForcedAlignment(lines) {
   const segments = buildForcedAlignSegments(lines, state.cues, state.duration);
   if (!segments.length) {
+    mergeCtcDiagnostic({ status: 'CTC ignoré', fallbackReason: 'aucun segment alignable' });
     finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
     return;
   }
@@ -749,6 +806,7 @@ function startForcedAlignment(lines) {
   state.pcm16kForAlign = null;
   const language = els.languageSelect.value === 'auto' ? 'french' : (els.languageSelect.value || 'french');
   const runtime = els.runtimeSelect.value === 'webgpu' ? 'webgpu' : 'wasm';
+  mergeCtcDiagnostic({ status: 'CTC lancement', segments: segments.length, requestedWords: segments.reduce((sum, segment) => sum + (segment.words?.length || 0), 0) });
   setStatus(`Alignement forcé CTC (${segments.length} segments)...`, 92, 'Option précision max: wav2vec2 CTC sur les paroles connues.');
   setPhase('forced alignment');
   try {
@@ -759,14 +817,19 @@ function startForcedAlignment(lines) {
         setStatus(msg.text || 'Alignement forcé...', null, 'Repli transparent sur les timestamps ASR si un segment échoue.');
       } else if (msg.type === 'progress') {
         setProgress(90 + Math.max(0, Math.min(9, (Number(msg.pct) || 0) * 0.09)));
+      } else if (msg.type === 'diagnostic') {
+        mergeCtcDiagnostic(msg);
       } else if (msg.type === 'aligned') {
-        onForcedAlignmentDone(msg.words || [], msg.modelId || 'CTC');
+        mergeCtcDiagnostic(msg.diagnostics || {});
+        onForcedAlignmentDone(msg.words || [], msg.modelId || 'CTC', msg.diagnostics || {});
       } else if (msg.type === 'error') {
+        mergeCtcDiagnostic({ status: 'CTC erreur', fallbackReason: msg.message || 'erreur inconnue' });
         setStatus(`Alignement forcé indisponible: ${msg.message || 'erreur inconnue'}`, 96, 'Repli automatique sur les timestamps Whisper + NW.');
         finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
       }
     };
     state.alignWorker.onerror = (error) => {
+      mergeCtcDiagnostic({ status: 'CTC worker error', fallbackReason: error.message || 'erreur worker' });
       setStatus(`Alignement forcé indisponible: ${error.message || 'erreur worker'}`, 96, 'Repli automatique sur les timestamps Whisper + NW.');
       finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
     };
@@ -781,20 +844,41 @@ function startForcedAlignment(lines) {
     alignPcm = null;
   } catch (error) {
     state.pcm16kForAlign = null;
+    mergeCtcDiagnostic({ status: 'CTC non lancé', fallbackReason: error.message || String(error) });
     setStatus(`Alignement forcé non lancé: ${error.message || error}`, 96, 'Repli automatique sur les timestamps ASR.');
     finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
   }
 }
 
-function onForcedAlignmentDone(forcedWords, modelId) {
+function onForcedAlignmentDone(forcedWords, modelId, diagnostics = {}) {
   try {
     state.forcedWords = forcedWords;
     const before = state.cues.length;
     state.cues = applyForcedAlignmentToCues(state.cues, forcedWords, state.duration);
-    const forcedCount = state.cues.forcedCount || forcedWords.length || 0;
-    setStatus(`Alignement forcé appliqué: ${forcedCount} mots recalés.`, 98, `Modèle CTC: ${modelId}. ${before} cues conservées.`);
+    const forcedCount = state.cues.forcedCount || 0;
+    const forcedCueCount = state.cues.forcedCueCount || 0;
+    const changedCueCount = state.cues.changedCueCount || 0;
+    const avgShiftMs = state.cues.avgShiftMs || 0;
+    mergeCtcDiagnostic({
+      status: forcedCount ? 'CTC appliqué' : 'CTC sans substitution',
+      modelId,
+      alignedWords: forcedWords.length,
+      substitutedWords: forcedCount,
+      cuesAffected: forcedCueCount,
+      cuesChanged: changedCueCount,
+      avgShiftMs,
+      fallbackReason: forcedCount ? '' : '0 timestamp substitué',
+      ...diagnostics,
+    });
+    if (!forcedCount) {
+      setStatus('CTC terminé mais aucune substitution appliquée.', 98, `Modèle CTC: ${modelId}. ${forcedWords.length} mots renvoyés, 0 utilisé.`);
+      finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback - CTC 0');
+      return;
+    }
+    setStatus(`Alignement forcé appliqué: ${forcedCount} mots recalés.`, 98, `Modèle CTC: ${modelId}. ${before} cues conservées, ${changedCueCount} modifiées, delta moyen ${Math.round(avgShiftMs)} ms.`);
     finalizeGeneratedCues(state.asrWords.length, forcedCount, 'forced CTC');
   } catch (error) {
+    mergeCtcDiagnostic({ status: 'CTC rejeté', fallbackReason: error.message || String(error) });
     setStatus(`Alignement forcé rejeté: ${error.message || error}`, 96, 'Repli automatique sur les timestamps Whisper + NW.');
     finalizeGeneratedCues(state.asrWords.length, 0, 'ASR fallback');
   }
@@ -873,6 +957,7 @@ function cuesToJson(cues) {
     vocalOnsetSnap: Boolean(els.onsetToggle?.checked),
     forcedAlignment: Boolean(els.forcedAlignToggle?.checked),
     forcedWords: state.forcedWords.length,
+    ctcStats: state.ctcStats,
     vocalOnsets: state.vocalOnsets.length,
     sourceAudio: state.audioFile?.name || null,
     duration: state.duration,

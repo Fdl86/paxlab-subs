@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PAXLAB Subs - DEV2.11</title>
+    <title>PAXLAB Subs - DEV2.11.1</title>
     <meta name="description" content="PAXLAB Subs - génération locale de sous-titres SRT/VTT depuis audio et paroles propres." />
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
@@ -16,7 +16,7 @@
             <div class="ps-brand-kicker">PAXLAB</div>
             <h1>Subs</h1>
           </div>
-          <span class="ps-version">DEV2.11 ALIGN</span>
+          <span class="ps-version">DEV2.11.1 ALIGN</span>
         </div>
         <div class="ps-title">
           <strong>Sous-titres automatiques</strong>
@@ -96,6 +96,12 @@
               <span id="psElapsedText">Elapsed: 0s</span>
               <span id="psEngineText">Worker: idle</span>
               <span><b id="psLiveCueMetric">0</b> cues / <b id="psLiveWordMetric">0</b> mots</span>
+            </div>
+            <div class="ps-ctc-diag" aria-label="Diagnostic CTC">
+              <span><b>CTC</b><em id="psCtcStatus">OFF</em></span>
+              <span><b>Mots</b><em id="psCtcWords">0/0</em></span>
+              <span><b>Cues</b><em id="psCtcCues">0 CTC / 0 mod.</em></span>
+              <span><b>Delta</b><em id="psCtcShift">0 ms</em></span>
             </div>
             <p id="psProgressHint">Worker ASR prêt. UI fluide pendant la transcription.</p>
           </section>

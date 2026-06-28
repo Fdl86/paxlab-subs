@@ -103,6 +103,15 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .ps-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .ps-metrics span { border: 1px solid rgba(255,255,255,.075); border-radius: 11px; padding: 8px; color: var(--ps-muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ps-engine p { margin: 9px 0 0; color: var(--ps-dim); font-size: 12px; line-height: 1.35; }
+
+.ps-ctc-diag { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.ps-ctc-diag span { border: 1px solid rgba(232,202,130,.12); background: rgba(232,202,130,.045); border-radius: 11px; padding: 8px; min-width: 0; }
+.ps-ctc-diag b { display: block; color: var(--ps-gold); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
+.ps-ctc-diag em { display: block; color: var(--ps-muted); font-style: normal; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ps-cue-row.ps-cue-ctc { border-color: rgba(232,202,130,.32); background: rgba(232,202,130,.075); }
+.ps-cue-conf b { display: block; color: var(--ps-gold); font-size: 10px; font-weight: 950; }
+.ps-cue-conf small { display: block; color: var(--ps-dim); font-size: 10px; }
+
 .ps-action-row, .ps-export-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
 .ps-export-row { grid-template-columns: 1fr 1fr 1fr; }
 .ps-primary, .ps-danger, .ps-export, .ps-play-main, .ps-round { border: 0; border-radius: 999px; padding: 13px 18px; font-weight: 950; }
@@ -136,7 +145,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .ps-adjust-grid button { border: 1px solid rgba(255,255,255,.08); border-radius: 999px; background: rgba(255,255,255,.045); padding: 9px; color: var(--ps-muted); font-size: 12px; font-weight: 850; }
 .ps-timeline-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--ps-muted); font-size: 12px; }
 .ps-cue-list { flex: 1; min-height: 130px; overflow: auto; display: grid; gap: 8px; padding-right: 4px; }
-.ps-cue-row { width: 100%; display: grid; grid-template-columns: 58px 1fr 44px; align-items: center; gap: 10px; text-align: left; border: 1px solid rgba(255,255,255,.075); background: rgba(255,255,255,.035); border-radius: 14px; padding: 10px; }
+.ps-cue-row { width: 100%; display: grid; grid-template-columns: 58px 1fr 52px; align-items: center; gap: 10px; text-align: left; border: 1px solid rgba(255,255,255,.075); background: rgba(255,255,255,.035); border-radius: 14px; padding: 10px; }
 .ps-cue-row.ps-is-active { border-color: rgba(232,202,130,.75); background: rgba(232,202,130,.10); }
 .ps-cue-row.ps-is-selected { outline: 1px solid rgba(255,248,236,.48); }
 .ps-cue-time b { display: block; color: var(--ps-gold); font-size: 12px; }

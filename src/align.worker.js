@@ -15,6 +15,8 @@ let processorCache = null;
 let cacheKey = '';
 
 function post(type, payload = {}) { self.postMessage({ type, ...payload }); }
+function diagnostic(payload = {}) { post('diagnostic', payload); }
+function countSegmentWords(segments = []) { return segments.reduce((sum, segment) => sum + ((segment.words || []).filter((word) => word?.norm).length), 0); }
 
 function normalizeCtc(text) {
   return String(text || '')
@@ -62,6 +64,7 @@ async function loadCtc(modelId, device) {
     if (modelCache && cacheKey === key) return { model: modelCache, tokenizer: tokenizerCache, processor: processorCache, modelId: candidate };
     try {
       post('status', { text: `Chargement modèle CTC ${candidate}...` });
+      diagnostic({ status: 'CTC model loading', modelId: candidate });
       const AutoModelForCTC = t.AutoModelForCTC || t.Wav2Vec2ForCTC || t.AutoModel;
       if (!AutoModelForCTC || !t.AutoTokenizer) throw new Error('Classes CTC indisponibles dans Transformers.js.');
       const options = {
@@ -79,9 +82,11 @@ async function loadCtc(modelId, device) {
       tokenizerCache = tokenizer;
       processorCache = processor;
       cacheKey = key;
+      diagnostic({ status: 'CTC model loaded', modelId: candidate });
       return { model, tokenizer, processor, modelId: candidate };
     } catch (error) {
       lastError = error;
+      diagnostic({ status: 'CTC model failed', modelId: candidate, fallbackReason: error?.message || String(error) });
       post('status', { text: `Échec CTC ${candidate}. ${candidate !== FALLBACK_MODEL ? 'Tentative repli...' : ''}` });
     }
   }
@@ -159,6 +164,7 @@ async function alignSegment(ctx, segment, pcm, sampleRate, index, total) {
   const words = (segment.words || []).filter((word) => word?.norm);
   if (!words.length) return [];
   const { tokenIds, tokenToWord, blank } = buildTokenIds(words, ctx.tokenizer);
+  diagnostic({ status: 'CTC segment tokens', segmentIndex: index, requestedWords: words.length, tokenCount: tokenIds.length });
   if (!tokenIds.length) return [];
   const chunk = slicePcm(pcm, sampleRate, start, end);
   if (chunk.length < sampleRate * 0.18) return [];
@@ -166,12 +172,16 @@ async function alignSegment(ctx, segment, pcm, sampleRate, index, total) {
   const output = await runModel(ctx.model, ctx.processor, chunk, sampleRate);
   const { data, dims } = logitsFromOutput(output);
   const frames = dims[dims.length - 2];
-  if (!frames || frames < tokenIds.length) return [];
+  if (!frames || frames < tokenIds.length) {
+    diagnostic({ status: 'CTC segment skipped', segmentIndex: index, requestedWords: words.length, frames: frames || 0, tokenCount: tokenIds.length });
+    return [];
+  }
   const wanted = [blank, ...tokenIds];
   const emissions = logSoftmaxRows(data, dims, wanted);
   const path = ctcTrellisAlign(emissions, tokenIds, blank);
   const frameSeconds = (end - start) / Math.max(1, frames);
   const local = aggregateTokenPathToWords(path, tokenToWord, frameSeconds, start);
+  diagnostic({ status: 'CTC segment aligned', segmentIndex: index, requestedWords: words.length, alignedWords: local.length, frames, tokenCount: tokenIds.length });
   return local.map((item) => ({
     lineIndex: segment.lineIndex,
     wordIndex: item.wordIndex,
@@ -185,22 +195,35 @@ async function runForcedAlign(message) {
   const { pcm16k, sampleRate = 16000, language = 'french', segments = [], modelId, device = 'wasm' } = message;
   if (!(pcm16k instanceof Float32Array)) throw new Error('PCM 16k manquant pour alignement forcé.');
   if (!Array.isArray(segments) || !segments.length) throw new Error('Segments manquants pour alignement forcé.');
+  const requestedWords = countSegmentWords(segments);
+  diagnostic({ status: 'CTC requested', segments: segments.length, requestedWords, alignedWords: 0, segmentsOk: 0, segmentsFailed: 0 });
   const selectedModel = modelId || (String(language).toLowerCase().startsWith('fr') ? DEFAULT_MODEL_FR : FALLBACK_MODEL);
   const ctx = await loadCtc(selectedModel, device === 'webgpu' ? 'webgpu' : 'wasm');
   post('status', { text: `CTC prêt: ${ctx.modelId}. Trellis par fenêtre.` });
+  diagnostic({ status: 'CTC ready', modelId: ctx.modelId, segments: segments.length, requestedWords });
   const aligned = [];
   const total = segments.length;
+  let segmentsOk = 0;
+  let segmentsFailed = 0;
   for (let i = 0; i < total; i += 1) {
     const pct = 35 + (i / Math.max(1, total)) * 60;
     post('progress', { pct });
     try {
-      aligned.push(...await alignSegment(ctx, segments[i], pcm16k, sampleRate, i, total));
+      const local = await alignSegment(ctx, segments[i], pcm16k, sampleRate, i, total);
+      if (local.length) segmentsOk += 1;
+      else segmentsFailed += 1;
+      aligned.push(...local);
+      diagnostic({ status: 'CTC running', segments: total, segmentsOk, segmentsFailed, requestedWords, alignedWords: aligned.length });
     } catch (error) {
+      segmentsFailed += 1;
+      diagnostic({ status: 'CTC segment error', segments: total, segmentsOk, segmentsFailed, requestedWords, alignedWords: aligned.length, fallbackReason: error?.message || String(error) });
       post('status', { text: `Segment non aligné, repli ASR: ${error?.message || error}` });
     }
   }
   post('progress', { pct: 98 });
-  post('aligned', { words: aligned, modelId: ctx.modelId });
+  const diagnostics = { status: aligned.length ? 'CTC words returned' : 'CTC zero words', modelId: ctx.modelId, segments: total, segmentsOk, segmentsFailed, requestedWords, alignedWords: aligned.length };
+  diagnostic(diagnostics);
+  post('aligned', { words: aligned, modelId: ctx.modelId, diagnostics });
 }
 
 self.onmessage = (event) => {

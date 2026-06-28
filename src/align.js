@@ -421,7 +421,14 @@ export function buildForcedAlignSegments(lines, cues, duration, padding = 0.45) 
 }
 
 export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
-  if (!Array.isArray(cues) || !cues.length || !Array.isArray(forcedWords) || !forcedWords.length) return cues;
+  if (!Array.isArray(cues) || !cues.length) return cues;
+  if (!Array.isArray(forcedWords) || !forcedWords.length) {
+    cues.forcedCount = 0;
+    cues.forcedCueCount = 0;
+    cues.changedCueCount = 0;
+    cues.avgShiftMs = 0;
+    return cues;
+  }
   const forcedMap = new Map();
   for (const word of forcedWords) {
     if (!Number.isInteger(word?.lineIndex) || !Number.isInteger(word?.wordIndex)) continue;
@@ -432,14 +439,26 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
       forcedMap.set(key, word);
     }
   }
-  if (!forcedMap.size) return cues;
+  if (!forcedMap.size) {
+    cues.forcedCount = 0;
+    cues.forcedCueCount = 0;
+    cues.changedCueCount = 0;
+    cues.avgShiftMs = 0;
+    return cues;
+  }
 
   let substituted = 0;
+  let forcedCueCount = 0;
+  let changedCueCount = 0;
+  let shiftSumMs = 0;
+  let shiftMeasures = 0;
   const next = cues.map((cue, lineIndex) => {
+    const beforeStart = cue.start;
+    const beforeEnd = cue.end;
     const displayTokens = tokenizeDisplayLine(cue.text);
     const baseWords = spreadCueWords(cue.text, cue.start, cue.end).map((word, wordIndex) => {
       const forced = forcedMap.get(`${lineIndex}:${wordIndex}`);
-      if (!forced) return { ...word, lineIndex, wordIndex, forced: false };
+      if (!forced) return { ...word, lineIndex, wordIndex, forced: false, timingSource: 'asr' };
       substituted += 1;
       return {
         ...word,
@@ -450,29 +469,40 @@ export function applyForcedAlignmentToCues(cues, forcedWords, duration) {
         score: forced.score ?? 0.75,
         matched: true,
         forced: true,
+        timingSource: 'forced-ctc',
       };
     });
     const forcedTimed = baseWords.filter((word) => word.forced && Number.isFinite(word.start) && Number.isFinite(word.end));
-    if (!forcedTimed.length) return { ...cue, words: cue.words?.length ? cue.words : baseWords };
+    if (!forcedTimed.length) return { ...cue, timingSource: cue.timingSource || 'asr', words: cue.words?.length ? cue.words : baseWords };
 
-    // Conserver l'ordre interne et interpoler les mots non forcés entre les ancres CTC.
+    forcedCueCount += 1;
     const timedWords = interpolateMissingWords(baseWords.map((word) => ({ ...word })), duration);
     const allTimed = timedWords.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
     const first = Math.min(...allTimed.map((word) => word.start));
     const last = Math.max(...allTimed.map((word) => word.end));
+    const nextStart = Math.max(0, first - 0.04);
+    const nextEnd = last + 0.1;
+    const shiftMs = (Math.abs(nextStart - beforeStart) + Math.abs(nextEnd - beforeEnd)) * 500;
+    shiftSumMs += shiftMs;
+    shiftMeasures += 1;
+    if (Math.abs(nextStart - beforeStart) > 0.015 || Math.abs(nextEnd - beforeEnd) > 0.015) changedCueCount += 1;
     const forcedRatio = forcedTimed.length / Math.max(1, displayTokens.length);
     return {
       ...cue,
-      start: Math.max(0, first - 0.04),
-      end: last + 0.1,
+      start: nextStart,
+      end: nextEnd,
       confidence: Math.max(cue.confidence || 0, Math.min(1, 0.55 + forcedRatio * 0.45)),
       timingSource: 'forced-ctc',
       forcedWords: forcedTimed.length,
+      timingShiftMs: shiftMs,
       words: timedWords,
     };
   });
   const ordered = enforceCueOrder(next, duration);
   ordered.forcedCount = substituted;
+  ordered.forcedCueCount = forcedCueCount;
+  ordered.changedCueCount = changedCueCount;
+  ordered.avgShiftMs = shiftMeasures ? shiftSumMs / shiftMeasures : 0;
   return ordered;
 }
 
